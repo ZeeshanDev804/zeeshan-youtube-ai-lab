@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
-  renderImagesToVideo
+  createImageVideo
 } from "./imageVideoRenderer.js";
 
 function cleanText(value = "") {
@@ -151,11 +151,14 @@ export async function createVisualVideo({
   );
 
   const result =
-    await renderImagesToVideo({
-      imageFiles,
+    await createImageVideo({
+      images:
+        imageFiles,
       outputDir,
       durationPerImage:
         numericDuration,
+      width: 1080,
+      height: 1920,
       fps:
         numericFps
     });
