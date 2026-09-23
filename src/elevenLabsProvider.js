@@ -84,17 +84,22 @@ export function getElevenLabsStatus() {
         config.apiKey &&
         config.voiceId
       ),
+
     provider:
       "ElevenLabs",
+
     model:
       config.modelId,
+
     status:
       config.apiKey &&
       config.voiceId
         ? "CONFIGURED"
         : "NOT_CONFIGURED",
+
     commercialUse:
       "PAID_PLAN_REQUIRED",
+
     message:
       "ElevenLabs TTS adapter is ready. Commercial monetized use requires appropriate paid-plan rights."
   };
@@ -163,16 +168,20 @@ export async function generateElevenLabsVoice({
         endpoint,
         {
           method: "POST",
+
           headers: {
             "xi-api-key":
               config.apiKey,
+
             "Content-Type":
               "application/json"
           },
+
           body:
             JSON.stringify({
               text:
                 validation.text,
+
               model_id:
                 finalModelId
             })
@@ -185,9 +194,12 @@ export async function generateElevenLabsVoice({
 
       return {
         success: false,
-        status: "PROVIDER_ERROR",
+        status:
+          "PROVIDER_ERROR",
+
         httpStatus:
           response.status,
+
         error:
           errorText ||
           "ElevenLabs request failed."
@@ -204,7 +216,9 @@ export async function generateElevenLabsVoice({
     ) {
       return {
         success: false,
-        status: "EMPTY_AUDIO",
+        status:
+          "EMPTY_AUDIO",
+
         error:
           "ElevenLabs returned empty audio."
       };
@@ -222,24 +236,38 @@ export async function generateElevenLabsVoice({
 
     return {
       success: true,
-      status: "GENERATED",
+
+      status:
+        "GENERATED",
+
       provider:
         "ElevenLabs",
+
       model:
         finalModelId,
+
       voiceId:
         finalVoiceId,
+
       outputFile,
+
       sizeBytes:
         stats.size,
-      format: "mp3",
+
+      format:
+        "mp3",
+
       createdAt:
         new Date().toISOString()
     };
+
   } catch (error) {
     return {
       success: false,
-      status: "PROVIDER_ERROR",
+
+      status:
+        "PROVIDER_ERROR",
+
       error:
         error?.message ||
         "ElevenLabs request failed."
