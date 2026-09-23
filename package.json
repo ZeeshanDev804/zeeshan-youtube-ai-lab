@@ -1,0 +1,17 @@
+{
+  "name": "zeeshan-youtube-ai-lab",
+  "version": "1.0.0",
+  "description": "ZEESHAN AI YouTube Automation System",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.js",
+    "dev": "node src/main.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7"
+  }
+}
