@@ -30,17 +30,23 @@ export function preparePublication({
     return {
       status: "BLOCKED",
       reason:
-        safetyDecision.reason,
-      safety
+        safetyDecision.reason ||
+        "Safety policy blocked publication.",
+      safety,
+      autoPublishAllowed: false,
+      createdAt:
+        new Date().toISOString()
     };
   }
 
   const duplicate =
     checkDuplicateContent({
-      text:
-        `${title || ""} ${script || ""}`.trim(),
+      title: title || "",
+      script: script || "",
       existingContent:
-        previousItems
+        Array.isArray(previousItems)
+          ? previousItems
+          : []
     });
 
   if (duplicate?.status === "BLOCK") {
@@ -49,13 +55,18 @@ export function preparePublication({
       reason:
         duplicate.reason ||
         "Duplicate content detected.",
-      duplicate
+      safety,
+      duplicate,
+      autoPublishAllowed: false,
+      createdAt:
+        new Date().toISOString()
     };
   }
 
   if (duplicate?.status === "REVIEW") {
     return {
-      status: "CEO_REVIEW_REQUIRED",
+      status:
+        "CEO_REVIEW_REQUIRED",
       reason:
         duplicate.reason ||
         "Duplicate-content review is required.",
@@ -79,8 +90,11 @@ export function preparePublication({
         : "CEO_REVIEW_REQUIRED",
 
     safety,
+
     duplicate,
+
     autoPublishAllowed,
+
     createdAt:
       new Date().toISOString()
   };
