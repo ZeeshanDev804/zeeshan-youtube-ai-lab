@@ -1,62 +1,88 @@
 const HIGH_RISK_PATTERNS = [
-  /\b(fake news|fabricated|made up story)\b/i,
-  /\bguaranteed money\b/i,
-  /\bget rich quick\b/i,
-  /\bscam\b/i,
-  /\bimpersonat(e|ion)\b/i,
-  /\bdeepfake\b/i,
-  /\bterrorist\b/i
+  /\bhow to make a bomb\b/i,
+  /\bmake an explosive\b/i,
+  /\bterrorist recruitment\b/i,
+  /\bterrorist propaganda\b/i,
+  /\bmalware download\b/i,
+  /\bransomware attack instructions\b/i,
+  /\bsteal passwords\b/i,
+  /\bhack someone's account\b/i,
+  /\bself harm instructions\b/i
 ];
 
-const MEDIUM_RISK_PATTERNS = [
-  /\bbreaking\b/i,
+const REVIEW_PATTERNS = [
+  /\bbreaking news\b/i,
   /\bexclusive\b/i,
   /\bshocking\b/i,
-  /\bsecret\b/i,
   /\ballegedly\b/i,
-  /\bcontroversy\b/i
+  /\bdeveloping story\b/i,
+  /\bunconfirmed\b/i,
+  /\bcelebrity death\b/i
 ];
+
+function normalizeText(value = "") {
+  return String(value)
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 export function analyzeSafety({
   title = "",
   script = "",
-  description = ""
+  description = "",
+  research = null
 } = {}) {
-  const text = `${title}\n${script}\n${description}`.trim();
+  const text = normalizeText(
+    `${title}\n${script}\n${description}`
+  );
 
-  const reasons = [];
+  const highRiskMatches =
+    HIGH_RISK_PATTERNS.filter(
+      (pattern) => pattern.test(text)
+    );
 
-  for (const pattern of HIGH_RISK_PATTERNS) {
-    if (pattern.test(text)) {
-      reasons.push(`High-risk pattern detected: ${pattern}`);
-    }
-  }
-
-  if (reasons.length > 0) {
+  if (highRiskMatches.length > 0) {
     return {
       level: "HIGH",
       approved: false,
       action: "BLOCK",
-      reasons
+      reasons: [
+        "High-risk content pattern detected."
+      ]
     };
   }
 
-  const mediumReasons = [];
+  const reviewMatches =
+    REVIEW_PATTERNS.filter(
+      (pattern) => pattern.test(text)
+    );
 
-  for (const pattern of MEDIUM_RISK_PATTERNS) {
-    if (pattern.test(text)) {
-      mediumReasons.push(
-        `Review pattern detected: ${pattern}`
-      );
-    }
-  }
-
-  if (mediumReasons.length > 0) {
+  if (
+    reviewMatches.length > 0 ||
+    research?.result?.status ===
+      "INSUFFICIENT_RESEARCH"
+  ) {
     return {
       level: "MEDIUM",
       approved: false,
       action: "REVIEW",
-      reasons: mediumReasons
+      reasons: [
+        "Additional human/CEO review is required."
+      ]
+    };
+  }
+
+  if (
+    research?.result?.status ===
+    "READY_FOR_RESEARCH_PROVIDER"
+  ) {
+    return {
+      level: "MEDIUM",
+      approved: false,
+      action: "REVIEW",
+      reasons: [
+        "Live research verification is not connected yet."
+      ]
     };
   }
 
@@ -69,26 +95,34 @@ export function analyzeSafety({
 }
 
 export function enforceSafety(result) {
-  if (!result || !result.level) {
-    throw new Error("Invalid safety result.");
+  if (!result?.level) {
+    throw new Error(
+      "Invalid safety result."
+    );
   }
 
   if (result.level === "HIGH") {
     return {
       allowed: false,
-      reason: "High-risk content blocked."
+      action: "BLOCK",
+      reason:
+        "High-risk content must not continue."
     };
   }
 
   if (result.level === "MEDIUM") {
     return {
       allowed: false,
-      reason: "Medium-risk content requires CEO review."
+      action: "REVIEW",
+      reason:
+        "Content requires review before publishing."
     };
   }
 
   return {
     allowed: true,
-    reason: "Low-risk content may continue."
+    action: "CONTINUE",
+    reason:
+      "Content passed the current safety checks."
   };
 }
