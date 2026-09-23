@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
-  renderImageSequenceToVideo
+  renderImagesToVideo
 } from "./imageVideoRenderer.js";
 
 function cleanText(value = "") {
@@ -14,7 +14,10 @@ function cleanText(value = "") {
 async function validateVisualFiles(scenes = []) {
   const errors = [];
 
-  if (!Array.isArray(scenes) || scenes.length === 0) {
+  if (
+    !Array.isArray(scenes) ||
+    scenes.length === 0
+  ) {
     return {
       valid: false,
       errors: [
@@ -23,7 +26,11 @@ async function validateVisualFiles(scenes = []) {
     };
   }
 
-  for (let index = 0; index < scenes.length; index += 1) {
+  for (
+    let index = 0;
+    index < scenes.length;
+    index += 1
+  ) {
     const scene = scenes[index];
 
     const imageFile =
@@ -62,7 +69,8 @@ async function validateVisualFiles(scenes = []) {
   }
 
   return {
-    valid: errors.length === 0,
+    valid:
+      errors.length === 0,
     errors
   };
 }
@@ -81,7 +89,8 @@ export async function createVisualVideo({
   if (!validation.valid) {
     return {
       success: false,
-      status: "VISUAL_FILES_INVALID",
+      status:
+        "VISUAL_FILES_INVALID",
       errors:
         validation.errors
     };
@@ -96,7 +105,9 @@ export async function createVisualVideo({
     );
 
   const numericDuration =
-    Number(durationPerScene);
+    Number(
+      durationPerScene
+    );
 
   const numericFps =
     Number(fps);
@@ -109,20 +120,24 @@ export async function createVisualVideo({
   ) {
     return {
       success: false,
-      status: "INVALID_DURATION",
+      status:
+        "INVALID_DURATION",
       error:
         "durationPerScene must be greater than zero."
     };
   }
 
   if (
-    !Number.isFinite(numericFps) ||
+    !Number.isFinite(
+      numericFps
+    ) ||
     numericFps < 24 ||
     numericFps > 60
   ) {
     return {
       success: false,
-      status: "INVALID_FPS",
+      status:
+        "INVALID_FPS",
       error:
         "FPS must be between 24 and 60."
     };
@@ -136,7 +151,7 @@ export async function createVisualVideo({
   );
 
   const result =
-    await renderImageSequenceToVideo({
+    await renderImagesToVideo({
       imageFiles,
       outputDir,
       durationPerImage:
@@ -145,10 +160,11 @@ export async function createVisualVideo({
         numericFps
     });
 
-  if (!result.success) {
+  if (!result?.success) {
     return {
       success: false,
-      status: "VIDEO_RENDER_FAILED",
+      status:
+        "VIDEO_RENDER_FAILED",
       rendererResult:
         result
     };
@@ -156,7 +172,8 @@ export async function createVisualVideo({
 
   return {
     success: true,
-    status: "VISUAL_VIDEO_READY",
+    status:
+      "VISUAL_VIDEO_READY",
     outputFile:
       result.outputFile,
     sceneCount:
