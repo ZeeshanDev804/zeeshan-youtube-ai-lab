@@ -1,56 +1,74 @@
-const TARGET_REGIONS = [
-  "US",
-  "GB",
-  "DE",
-  "FR",
-  "IT",
-  "ES",
-  "NL"
+import config from "./config.js";
+
+const BLOCKED_TOPIC_PATTERNS = [
+  /\bhow to hack\b/i,
+  /\bmalware\b/i,
+  /\bransomware\b/i,
+  /\bterrorist attack\b/i,
+  /\bexplosive\b/i,
+  /\bmake a bomb\b/i,
+  /\bself harm\b/i
 ];
 
-function scoreTopic(topic) {
-  let score = 0;
+const PREFERRED_CATEGORIES = [
+  "technology",
+  "science",
+  "business",
+  "entertainment",
+  "sports",
+  "culture",
+  "gaming"
+];
 
-  score += Number(topic.trendScore || 0) * 0.45;
-  score += Number(topic.relevanceScore || 0) * 0.30;
-  score += Number(topic.originalityScore || 0) * 0.15;
-  score += Number(topic.visualScore || 0) * 0.10;
-
-  return Math.round(score * 100) / 100;
+function normalize(text = "") {
+  return String(text)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-export function selectTopics(
-  topics = [],
-  maxTopics = 5
-) {
-  const prepared = topics
-    .filter(Boolean)
-    .map((topic) => ({
-      ...topic,
-      region: topic.region || TARGET_REGIONS[0],
-      score: scoreTopic(topic)
-    }))
-    .filter((topic) => topic.score > 0);
+function isBlocked(topic) {
+  const text = normalize(
+    `${topic.title || ""} ${topic.category || ""}`
+  );
 
-  prepared.sort((a, b) => b.score - a.score);
+  return BLOCKED_TOPIC_PATTERNS.some(
+    (pattern) => pattern.test(text)
+  );
+}
 
-  const selected = [];
-  const usedRegions = new Set();
+function calculateScore(topic) {
+  const trend =
+    Number(topic.trendScore || 0);
 
-  for (const topic of prepared) {
-    if (selected.length >= maxTopics) {
-      break;
-    }
+  const relevance =
+    Number(topic.relevanceScore || 0);
 
-    const region = topic.region;
+  const originality =
+    Number(topic.originalityScore || 0);
 
-    if (!usedRegions.has(region) || selected.length < 2) {
-      selected.push(topic);
-      usedRegions.add(region);
-    }
+  const visual =
+    Number(topic.visualScore || 0);
+
+  let score =
+    trend * 0.45 +
+    relevance * 0.25 +
+    originality * 0.20 +
+    visual * 0.10;
+
+  if (
+    PREFERRED_CATEGORIES.includes(
+      normalize(topic.category)
+    )
+  ) {
+    score += 5;
   }
 
-  return selected;
+  return Math.min(
+    100,
+    Math.round(score * 100) / 100
+  );
 }
 
 export function validateTopic(topic) {
@@ -61,10 +79,20 @@ export function validateTopic(topic) {
     };
   }
 
-  if (!topic.title || String(topic.title).trim().length < 5) {
+  if (
+    !topic.title ||
+    String(topic.title).trim().length < 5
+  ) {
     return {
       valid: false,
       reason: "Topic title is too short."
+    };
+  }
+
+  if (isBlocked(topic)) {
+    return {
+      valid: false,
+      reason: "Topic matched a blocked safety pattern."
     };
   }
 
@@ -72,4 +100,64 @@ export function validateTopic(topic) {
     valid: true,
     reason: null
   };
+}
+
+export function selectTopics(
+  topics = [],
+  maxTopics = config.system.maxDailyVideos
+) {
+  const safeTopics = [];
+
+  for (const topic of topics) {
+    const validation =
+      validateTopic(topic);
+
+    if (!validation.valid) {
+      continue;
+    }
+
+    safeTopics.push({
+      ...topic,
+      score: calculateScore(topic)
+    });
+  }
+
+  safeTopics.sort(
+    (a, b) => b.score - a.score
+  );
+
+  const selected = [];
+  const usedTitles = new Set();
+
+  for (const topic of safeTopics) {
+    if (selected.length >= maxTopics) {
+      break;
+    }
+
+    const key = normalize(
+      topic.title
+    );
+
+    if (usedTitles.has(key)) {
+      continue;
+    }
+
+    usedTitles.add(key);
+
+    selected.push(topic);
+  }
+
+  return selected;
+}
+
+export function rankTopics(topics = []) {
+  return topics
+    .filter(Boolean)
+    .map((topic) => ({
+      ...topic,
+      score: calculateScore(topic)
+    }))
+    .sort(
+      (a, b) => b.score - a.score
+    );
 }
