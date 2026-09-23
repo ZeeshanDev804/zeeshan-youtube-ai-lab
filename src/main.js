@@ -1,128 +1,173 @@
-import config, {
-  validateConfig
-} from "./config.js";
+import "dotenv/config";
 
 import {
-  getSystemStatus,
-  canRunAutomation
+  getSystemStatus
 } from "./ceoControl.js";
 
-import { getTrendRadar } from "./trendRadar.js";
+import {
+  getTrendRadarStatus
+} from "./trendRadar.js";
 
 import {
-  selectTopics,
-  validateTopic
-} from "./topicSelector.js";
+  getShortProductionControllerStatus
+} from "./shortProductionController.js";
 
 import {
-  createScriptPlaceholder
-} from "./scriptEngine.js";
+  getShortQualityPipelineStatus
+} from "./shortQualityPipeline.js";
 
-function printHeader() {
-  console.log("");
-  console.log("==========================================");
-  console.log("       ZEESHAN AI YOUTUBE LAB");
-  console.log("       AI YOUTUBE AUTOMATION ENGINE");
-  console.log("==========================================");
-  console.log("");
+import {
+  getYouTubePublishGateStatus
+} from "./youtubePublishGate.js";
+
+import {
+  runProductionControllerTest
+} from "./productionControllerTest.js";
+
+function printSection(title, data) {
+  console.log(`\n=== ${title} ===`);
+  console.log(
+    JSON.stringify(
+      data,
+      null,
+      2
+    )
+  );
 }
 
 async function runSystemTest() {
-  printHeader();
+  console.log(
+    "\n================================"
+  );
+
+  console.log(
+    "ZEESHAN AI YOUTUBE LAB"
+  );
+
+  console.log(
+    "SYSTEM TEST"
+  );
+
+  console.log(
+    "================================"
+  );
+
+  const systemStatus =
+    getSystemStatus();
+
+  printSection(
+    "CEO CONTROL",
+    systemStatus
+  );
+
+  let trendStatus;
 
   try {
-    validateConfig();
-
-    console.log("CONFIG: OK");
-
-    const systemStatus = getSystemStatus();
-
-    console.log("SYSTEM STATUS:");
-    console.log(systemStatus);
-
-    if (!canRunAutomation()) {
-      console.log("");
-      console.log(
-        "AUTOMATION: STOPPED BY SYSTEM CONTROL"
-      );
-      return;
-    }
-
-    const radar = await getTrendRadar();
-
-    console.log("");
-    console.log("TREND RADAR:");
-    console.log(
-      `Topics found: ${radar.topicCount}`
-    );
-    console.log(
-      `Source status: ${radar.sourceStatus}`
-    );
-
-    const selected = selectTopics(
-      radar.topics,
-      Math.min(
-        config.system.maxDailyVideos,
-        radar.topics.length
-      )
-    );
-
-    console.log("");
-    console.log("SELECTED TOPICS:");
-
-    for (const topic of selected) {
-      const validation = validateTopic(topic);
-
-      if (!validation.valid) {
-        console.log(
-          `SKIPPED: ${validation.reason}`
-        );
-        continue;
-      }
-
-      const scriptJob =
-        createScriptPlaceholder(topic);
-
-      console.log(
-        `- ${topic.title}`
-      );
-
-      console.log(
-        `  Script status: ${scriptJob.status}`
-      );
-    }
-
-    console.log("");
-    console.log("SYSTEM TEST COMPLETE.");
-    console.log(
-      "No real YouTube upload was performed."
-    );
-    console.log(
-      "No real AI API was called."
-    );
-    console.log(
-      "No fake trend data was presented as live data."
-    );
-
+    trendStatus =
+      getTrendRadarStatus();
   } catch (error) {
-    console.error("");
-    console.error("SYSTEM ERROR:");
-    console.error(error.message);
-
-    process.exitCode = 1;
+    trendStatus = {
+      status: "ERROR",
+      error:
+        error?.message ||
+        "Trend radar status failed."
+    };
   }
+
+  printSection(
+    "TREND RADAR",
+    trendStatus
+  );
+
+  const productionStatus =
+    getShortProductionControllerStatus();
+
+  printSection(
+    "SHORT PRODUCTION CONTROLLER",
+    productionStatus
+  );
+
+  const qualityStatus =
+    getShortQualityPipelineStatus();
+
+  printSection(
+    "QUALITY PIPELINE",
+    qualityStatus
+  );
+
+  const publishGateStatus =
+    getYouTubePublishGateStatus();
+
+  printSection(
+    "YOUTUBE PUBLISH GATE",
+    publishGateStatus
+  );
+
+  const productionTest =
+    await runProductionControllerTest();
+
+  printSection(
+    "PRODUCTION TEST",
+    productionTest
+  );
+
+  const finalStatus = {
+    system:
+      systemStatus.mode !== undefined,
+
+    productionController:
+      productionStatus.status ===
+      "READY",
+
+    qualityPipeline:
+      qualityStatus.status ===
+      "READY",
+
+    youtubePublishGate:
+      publishGateStatus.status ===
+      "READY",
+
+    productionTest:
+      productionTest.success === true
+  };
+
+  const passed =
+    Object.values(finalStatus)
+      .every(Boolean);
+
+  console.log(
+    "\n================================"
+  );
+
+  console.log(
+    passed
+      ? "FINAL RESULT: PASS"
+      : "FINAL RESULT: CHECK REQUIRED"
+  );
+
+  console.log(
+    "================================"
+  );
+
+  return {
+    success: passed,
+    status:
+      passed
+        ? "PASS"
+        : "CHECK_REQUIRED",
+    checks:
+      finalStatus
+  };
 }
 
-async function main() {
-  const testMode =
-    process.argv.includes("--test");
-
-  if (testMode) {
-    await runSystemTest();
-    return;
-  }
-
+if (
+  process.argv.includes(
+    "--test"
+  )
+) {
   await runSystemTest();
 }
 
-main();
+export {
+  runSystemTest
+};
