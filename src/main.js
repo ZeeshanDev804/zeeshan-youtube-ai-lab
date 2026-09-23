@@ -5,7 +5,7 @@ import {
 } from "./ceoControl.js";
 
 import {
-  getTrendRadarStatus
+  getTrendRadar
 } from "./trendRadar.js";
 
 import {
@@ -64,13 +64,13 @@ async function runSystemTest() {
 
   try {
     trendStatus =
-      getTrendRadarStatus();
+      await getTrendRadar();
   } catch (error) {
     trendStatus = {
       status: "ERROR",
       error:
         error?.message ||
-        "Trend radar status failed."
+        "Trend radar check failed."
     };
   }
 
