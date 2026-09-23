@@ -3,128 +3,106 @@ import path from "node:path";
 
 const DEFAULT_OUTPUT_DIR = "./storage/videos";
 
-const MIN_DURATION = 20;
-const MAX_DURATION = 59;
+const SUPPORTED_FORMATS = [
+  ".mp4",
+  ".mov",
+  ".webm"
+];
 
-const DEFAULT_WIDTH = 1080;
-const DEFAULT_HEIGHT = 1920;
-const DEFAULT_FPS = 30;
-
-function toNumber(value, fallback) {
-  const number = Number(value);
-  return Number.isFinite(number)
-    ? number
-    : fallback;
+function cleanText(value = "") {
+  return String(value)
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function validateVideoSettings({
-  width = DEFAULT_WIDTH,
-  height = DEFAULT_HEIGHT,
-  fps = DEFAULT_FPS,
-  durationSeconds
+function createVideoId() {
+  return `video_${Date.now()}`;
+}
+
+function validateVideoInput({
+  width = 1080,
+  height = 1920,
+  fps = 30,
+  durationSeconds,
+  format = ".mp4"
 } = {}) {
-  const safeWidth = toNumber(
-    width,
-    DEFAULT_WIDTH
-  );
-
-  const safeHeight = toNumber(
-    height,
-    DEFAULT_HEIGHT
-  );
-
-  const safeFps = toNumber(
-    fps,
-    DEFAULT_FPS
-  );
-
-  const safeDuration = toNumber(
-    durationSeconds,
-    0
-  );
-
   const errors = [];
 
-  if (safeWidth !== 1080) {
+  const numericWidth = Number(width);
+  const numericHeight = Number(height);
+  const numericFps = Number(fps);
+  const duration = Number(durationSeconds);
+
+  if (
+    numericWidth !== 1080 ||
+    numericHeight !== 1920
+  ) {
     errors.push(
-      "YouTube Shorts width must be 1080."
+      "Video must be 1080x1920 vertical format."
     );
   }
 
-  if (safeHeight !== 1920) {
-    errors.push(
-      "YouTube Shorts height must be 1920."
-    );
-  }
-
-  if (safeFps < 24 || safeFps > 60) {
+  if (
+    !Number.isFinite(numericFps) ||
+    numericFps < 24 ||
+    numericFps > 60
+  ) {
     errors.push(
       "FPS must be between 24 and 60."
     );
   }
 
   if (
-    safeDuration < MIN_DURATION ||
-    safeDuration > MAX_DURATION
+    !Number.isFinite(duration) ||
+    duration < 20 ||
+    duration > 59
   ) {
     errors.push(
-      `Duration must be between ${MIN_DURATION} and ${MAX_DURATION} seconds.`
+      "Duration must be between 20 and 59 seconds."
+    );
+  }
+
+  const normalizedFormat =
+    String(format)
+      .toLowerCase()
+      .trim();
+
+  if (
+    !SUPPORTED_FORMATS.includes(
+      normalizedFormat
+    )
+  ) {
+    errors.push(
+      "Unsupported video format."
     );
   }
 
   return {
     valid: errors.length === 0,
     errors,
-    settings: {
-      width: safeWidth,
-      height: safeHeight,
-      fps: safeFps,
-      durationSeconds: safeDuration
-    }
+    width: numericWidth,
+    height: numericHeight,
+    fps: numericFps,
+    durationSeconds: duration,
+    format: normalizedFormat
   };
 }
 
-async function ensureDirectory(directory) {
-  await fs.mkdir(directory, {
-    recursive: true
-  });
-}
-
-function createVideoJob({
-  title = "",
+function buildVideoJob({
+  width = 1080,
+  height = 1920,
+  fps = 30,
   durationSeconds,
-  width,
-  height,
-  fps
-}) {
-  return {
-    id: `video_${Date.now()}`,
-    title: String(title).trim(),
-    status: "READY",
-    format: "mp4",
-    width,
-    height,
-    fps,
-    durationSeconds,
-    createdAt:
-      new Date().toISOString()
-  };
-}
-
-export async function createVideoJob({
-  title = "",
-  durationSeconds,
-  width = DEFAULT_WIDTH,
-  height = DEFAULT_HEIGHT,
-  fps = DEFAULT_FPS,
-  outputDir = DEFAULT_OUTPUT_DIR
+  outputDir = DEFAULT_OUTPUT_DIR,
+  format = ".mp4"
 } = {}) {
   const validation =
-    validateVideoSettings({
+    validateVideoInput({
       width,
       height,
       fps,
-      durationSeconds
+      durationSeconds,
+      format
     });
 
   if (!validation.valid) {
@@ -135,27 +113,50 @@ export async function createVideoJob({
     };
   }
 
-  await ensureDirectory(outputDir);
-
-  const job = {
-    id: `video_${Date.now()}`,
-    title: String(title).trim(),
-    status: "READY_FOR_RENDERER",
-    format: "mp4",
-    settings: validation.settings,
-    outputDir: path.resolve(outputDir),
-    outputFile: null,
-    createdAt:
-      new Date().toISOString()
-  };
+  const id = createVideoId();
 
   return {
     success: true,
-    ...job
+    id,
+    status: "READY_FOR_RENDER",
+    width: validation.width,
+    height: validation.height,
+    fps: validation.fps,
+    durationSeconds:
+      validation.durationSeconds,
+    format: validation.format,
+    outputDir:
+      path.resolve(outputDir),
+    outputFile: path.resolve(
+      outputDir,
+      `${id}${validation.format}`
+    ),
+    createdAt:
+      new Date().toISOString()
   };
 }
 
-export function validateVideoFile(filePath) {
+export function createVideoJob(options = {}) {
+  return buildVideoJob(options);
+}
+
+export async function prepareVideoDirectory(
+  outputDir = DEFAULT_OUTPUT_DIR
+) {
+  await fs.mkdir(outputDir, {
+    recursive: true
+  });
+
+  return {
+    ready: true,
+    directory:
+      path.resolve(outputDir)
+  };
+}
+
+export function validateVideoOutput(
+  filePath
+) {
   if (
     typeof filePath !== "string" ||
     !filePath.trim()
@@ -163,7 +164,7 @@ export function validateVideoFile(filePath) {
     return {
       valid: false,
       reason:
-        "Video file path is required."
+        "Video output path is required."
     };
   }
 
@@ -171,11 +172,15 @@ export function validateVideoFile(filePath) {
     path.extname(filePath)
       .toLowerCase();
 
-  if (extension !== ".mp4") {
+  if (
+    !SUPPORTED_FORMATS.includes(
+      extension
+    )
+  ) {
     return {
       valid: false,
       reason:
-        "Video must be an MP4 file."
+        "Unsupported video format."
     };
   }
 
@@ -185,11 +190,11 @@ export function validateVideoFile(filePath) {
   };
 }
 
-export async function checkVideoFile(
+export async function checkVideoOutput(
   filePath
 ) {
   const validation =
-    validateVideoFile(filePath);
+    validateVideoOutput(filePath);
 
   if (!validation.valid) {
     return validation;
@@ -203,7 +208,7 @@ export async function checkVideoFile(
       return {
         valid: false,
         reason:
-          "Video path is not a file."
+          "Video output is not a file."
       };
     }
 
@@ -225,47 +230,73 @@ export async function checkVideoFile(
     return {
       valid: false,
       reason:
-        "Video file does not exist."
+        "Video output file does not exist."
     };
   }
 }
 
-export function createShortsRenderPlan({
-  title = "",
-  durationSeconds,
-  width = DEFAULT_WIDTH,
-  height = DEFAULT_HEIGHT,
-  fps = DEFAULT_FPS,
-  audioFile = null,
-  visualAssets = []
+export function validateVideoMetadata({
+  title,
+  description = "",
+  durationSeconds
 } = {}) {
-  const validation =
-    validateVideoSettings({
-      width,
-      height,
-      fps,
-      durationSeconds
-    });
+  const errors = [];
 
-  if (!validation.valid) {
-    return {
-      ready: false,
-      status: "INVALID",
-      errors: validation.errors
-    };
+  const cleanTitle =
+    cleanText(title);
+
+  const cleanDescription =
+    cleanText(description);
+
+  const duration =
+    Number(durationSeconds);
+
+  if (!cleanTitle) {
+    errors.push(
+      "Video title is required."
+    );
+  }
+
+  if (cleanTitle.length > 100) {
+    errors.push(
+      "Video title is too long."
+    );
+  }
+
+  if (cleanDescription.length > 5000) {
+    errors.push(
+      "Video description is too long."
+    );
+  }
+
+  if (
+    !Number.isFinite(duration) ||
+    duration < 20 ||
+    duration > 59
+  ) {
+    errors.push(
+      "Video duration must be between 20 and 59 seconds."
+    );
   }
 
   return {
-    ready: true,
-    status: "READY_FOR_RENDERER",
-    title: String(title).trim(),
-    video: validation.settings,
-    audioFile,
-    visualAssets: Array.isArray(
-      visualAssets
-    )
-      ? visualAssets
-      : [],
-    outputFormat: "mp4"
+    valid: errors.length === 0,
+    errors,
+    title: cleanTitle,
+    description: cleanDescription,
+    durationSeconds: duration
+  };
+}
+
+export function getVideoEngineStatus() {
+  return {
+    configured: true,
+    status: "READY",
+    format: "MP4",
+    resolution: "1080x1920",
+    supportedFps: "24-60",
+    supportedDuration: "20-59 seconds",
+    message:
+      "Video engine is ready for the rendering pipeline."
   };
 }
