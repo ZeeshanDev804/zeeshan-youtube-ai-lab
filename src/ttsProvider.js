@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 
 const DEFAULT_OUTPUT_DIR = "./storage/audio";
 
@@ -7,6 +9,69 @@ function cleanText(text = "") {
   return String(text)
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function createJobId() {
+  return `tts_${Date.now()}_${crypto
+    .randomBytes(4)
+    .toString("hex")}`;
+}
+
+function runCommand(command, args = []) {
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    let child;
+
+    try {
+      child = spawn(command, args, {
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+    } catch (error) {
+      finish({
+        success: false,
+        error:
+          error?.message ||
+          "Process could not be started."
+      });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    child.on("error", (error) => {
+      finish({
+        success: false,
+        error:
+          error?.message ||
+          "Process failed."
+      });
+    });
+
+    child.on("close", (code) => {
+      finish({
+        success: code === 0,
+        code,
+        stdout,
+        stderr
+      });
+    });
+  });
 }
 
 function validateInput({
@@ -48,10 +113,6 @@ function validateInput({
     language: language.trim(),
     voice: voice.trim()
   };
-}
-
-function createJobId() {
-  return `tts_${Date.now()}`;
 }
 
 export function createTTSJob({
@@ -172,6 +233,56 @@ export function validateAudioOutput(
   };
 }
 
+async function getAudioDuration(
+  filePath
+) {
+  const result =
+    await runCommand(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        filePath
+      ]
+    );
+
+  if (!result.success) {
+    return {
+      valid: false,
+      reason:
+        result.stderr ||
+        result.error ||
+        "FFprobe could not read audio duration."
+    };
+  }
+
+  const duration =
+    Number(
+      String(result.stdout).trim()
+    );
+
+  if (
+    !Number.isFinite(duration) ||
+    duration <= 0
+  ) {
+    return {
+      valid: false,
+      reason:
+        "Audio duration is invalid."
+    };
+  }
+
+  return {
+    valid: true,
+    durationSeconds:
+      Number(duration.toFixed(3))
+  };
+}
+
 export async function checkAudioOutput(
   filePath
 ) {
@@ -194,7 +305,7 @@ export async function checkAudioOutput(
       };
     }
 
-    if (stats.size === 0) {
+    if (stats.size <= 0) {
       return {
         valid: false,
         reason:
@@ -202,12 +313,35 @@ export async function checkAudioOutput(
       };
     }
 
+    const duration =
+      await getAudioDuration(
+        filePath
+      );
+
+    if (!duration.valid) {
+      return {
+        valid: false,
+        reason:
+          duration.reason
+      };
+    }
+
     return {
       valid: true,
-      sizeBytes: stats.size,
+
+      sizeBytes:
+        stats.size,
+
       extension:
-        validation.extension
+        validation.extension,
+
+      durationSeconds:
+        duration.durationSeconds,
+
+      hasAudio:
+        true
     };
+
   } catch {
     return {
       valid: false,
@@ -234,11 +368,15 @@ export async function generateVoice(
 
   return {
     ...job,
-    status: "PROVIDER_REQUIRED",
+
+    status:
+      "PROVIDER_REQUIRED",
+
     estimatedDuration:
       estimateSpeechDuration(
         job.text
       ),
+
     message:
       "TTS provider is not connected. No fake audio was generated."
   };
@@ -247,8 +385,12 @@ export async function generateVoice(
 export function getTTSProviderStatus() {
   return {
     configured: false,
+
     provider: null,
-    status: "NOT_CONFIGURED",
+
+    status:
+      "NOT_CONFIGURED",
+
     message:
       "A real TTS provider must be configured before audio generation."
   };
