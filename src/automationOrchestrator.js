@@ -35,8 +35,23 @@ const LOG_FILE = path.join(
   "automation-log.jsonl"
 );
 
-// 5 = TARGET ONLY.
-// There is NO hard maximum.
+/*
+|--------------------------------------------------------------------------
+| DAILY POLICY
+|--------------------------------------------------------------------------
+|
+| 5 videos/day is the TARGET.
+| It is NOT a hard maximum.
+|
+| 2 good topics  -> 2 videos
+| 5 good topics  -> 5 videos
+| 8 good topics  -> 8 videos
+|
+| Weak/risky/repetitive topics are
+| never forced just to reach 5.
+|--------------------------------------------------------------------------
+*/
+
 const DAILY_TARGET_VIDEOS = 5;
 
 const MAX_STAGE_RETRIES = 2;
@@ -71,6 +86,7 @@ function normalizeRegion(value) {
     UNITED_STATES: "USA",
     UNITEDSTATES: "USA",
 
+    GB: "UK",
     UK: "UK",
     UNITED_KINGDOM: "UK",
     UNITEDKINGDOM: "UK",
@@ -80,6 +96,7 @@ function normalizeRegion(value) {
 
     ME: "MIDDLE_EAST",
     MIDDLEEAST: "MIDDLE_EAST",
+    "MIDDLE EAST": "MIDDLE_EAST",
     MIDDLE_EAST: "MIDDLE_EAST",
 
     ALL: "ALL"
@@ -105,7 +122,10 @@ function normalizeRequestedVideos(value) {
 
   return Math.max(
     1,
-    Math.floor(number)
+    Math.min(
+      50,
+      Math.floor(number)
+    )
   );
 }
 
@@ -192,6 +212,7 @@ async function writeState(state) {
 
   const nextState = {
     ...state,
+
     updatedAt:
       new Date().toISOString()
   };
@@ -212,13 +233,16 @@ async function writeState(state) {
 async function appendLog(entry) {
   await ensureAutomationStorage();
 
+  const logEntry = {
+    ...entry,
+
+    loggedAt:
+      new Date().toISOString()
+  };
+
   await fs.appendFile(
     LOG_FILE,
-    `${JSON.stringify({
-      ...entry,
-      loggedAt:
-        new Date().toISOString()
-    })}\n`,
+    `${JSON.stringify(logEntry)}\n`,
     "utf8"
   );
 }
@@ -234,7 +258,9 @@ function resetDailyStateIfNeeded(state) {
   ) {
     return {
       ...state,
+
       date: today,
+
       dailyCount: 0
     };
   }
@@ -291,8 +317,7 @@ async function runStage(
   stageName,
   handler,
   {
-    maxRetries =
-      MAX_STAGE_RETRIES
+    maxRetries = MAX_STAGE_RETRIES
   } = {}
 ) {
   let lastError = null;
@@ -374,6 +399,12 @@ function extractTrendList(result) {
   }
 
   if (
+    Array.isArray(result?.topics)
+  ) {
+    return result.topics;
+  }
+
+  if (
     Array.isArray(result?.trends)
   ) {
     return result.trends;
@@ -402,18 +433,17 @@ function normalizeTrend(
   if (
     typeof trend === "string"
   ) {
+    const topic =
+      cleanText(trend);
+
     return {
-      topic:
-        cleanText(trend),
+      topic,
 
-      title:
-        cleanText(trend),
+      title: topic,
 
-      rank:
-        index + 1,
+      rank: index + 1,
 
-      category:
-        "general",
+      category: "general",
 
       region
     };
@@ -428,16 +458,18 @@ function normalizeTrend(
       ""
     );
 
+  const topic =
+    cleanText(
+      trend?.topic ||
+      title
+    );
+
   return {
     ...trend,
 
     title,
 
-    topic:
-      cleanText(
-        trend?.topic ||
-        title
-      ),
+    topic,
 
     rank:
       Number(
@@ -480,8 +512,10 @@ function normalizeTrends(
     )
     .filter(
       (trend) =>
-        cleanText(
-          trend.topic
+        Boolean(
+          cleanText(
+            trend.topic
+          )
         )
     )
     .filter(
@@ -509,12 +543,17 @@ function selectTrends(
   requestedVideos,
   region
 ) {
+  const requested =
+    normalizeRequestedVideos(
+      requestedVideos
+    );
+
   return normalizeTrends(
     result,
     region
   ).slice(
     0,
-    requestedVideos
+    requested
   );
 }
 
@@ -579,7 +618,9 @@ function getResearchText(
   return cleanText(
     [
       directText,
+
       claims.join(". "),
+
       notes.join(". ")
     ]
       .filter(Boolean)
@@ -658,24 +699,38 @@ function calculateRiskLevel({
   }
 
   if (researchRisk) {
-    risks.push(researchRisk);
+    risks.push(
+      researchRisk
+    );
   }
 
   if (safetyRisk) {
-    risks.push(safetyRisk);
+    risks.push(
+      safetyRisk
+    );
   }
 
-  if (
+  const copyrightStatus =
     String(
       copyright?.status || ""
-    ).toUpperCase() ===
-    "REVIEW"
+    ).toUpperCase();
+
+  if (
+    copyrightStatus === "REVIEW"
   ) {
     risks.push("MEDIUM");
   }
 
+  if (
+    copyrightStatus === "BLOCK"
+  ) {
+    risks.push("HIGH");
+  }
+
   if (copyrightRisk) {
-    risks.push(copyrightRisk);
+    risks.push(
+      copyrightRisk
+    );
   }
 
   if (
@@ -757,7 +812,7 @@ async function loadExistingContent() {
         return data.content;
       }
     } catch {
-      // Continue.
+      // Continue to the next history file.
     }
   }
 
@@ -875,15 +930,21 @@ async function processSingleTrend({
   if (!topic) {
     return {
       success: false,
-      status: "INVALID_TOPIC",
+
+      status:
+        "INVALID_TOPIC",
+
       runId,
+
       region
     };
   }
 
-  // =========================================================
-  // 1. RESEARCH
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 1. RESEARCH
+  |--------------------------------------------------------------------------
+  */
 
   const researchStage =
     await runStage(
@@ -989,9 +1050,11 @@ async function processSingleTrend({
     };
   }
 
-  // =========================================================
-  // 2. SCRIPT
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 2. SCRIPT
+  |--------------------------------------------------------------------------
+  */
 
   const scriptStage =
     await runStage(
@@ -1076,9 +1139,11 @@ async function processSingleTrend({
       ""
     );
 
-  // =========================================================
-  // 3. SAFETY
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 3. SAFETY
+  |--------------------------------------------------------------------------
+  */
 
   const safetyStage =
     await runStage(
@@ -1144,9 +1209,11 @@ async function processSingleTrend({
     };
   }
 
-  // =========================================================
-  // 4. COPYRIGHT
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 4. COPYRIGHT
+  |--------------------------------------------------------------------------
+  */
 
   const sources =
     Array.isArray(
@@ -1210,7 +1277,28 @@ async function processSingleTrend({
     ).toUpperCase();
 
   if (
-    copyrightStatus !== "PASS"
+    copyrightStatus ===
+    "BLOCK"
+  ) {
+    return {
+      success: false,
+
+      status:
+        "COPYRIGHT_BLOCKED",
+
+      runId,
+
+      topic,
+
+      region,
+
+      copyright
+    };
+  }
+
+  if (
+    copyrightStatus !==
+    "PASS"
   ) {
     return {
       success: true,
@@ -1231,9 +1319,11 @@ async function processSingleTrend({
     };
   }
 
-  // =========================================================
-  // 5. DUPLICATE
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 5. DUPLICATE
+  |--------------------------------------------------------------------------
+  */
 
   const existingContent =
     await loadExistingContent();
@@ -1295,15 +1385,20 @@ async function processSingleTrend({
     };
   }
 
-  // =========================================================
-  // 6. RISK ENGINE
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 6. RISK ENGINE
+  |--------------------------------------------------------------------------
+  */
 
   const riskLevel =
     calculateRiskLevel({
       research,
+
       safety,
+
       copyright,
+
       duplicate
     });
 
@@ -1312,9 +1407,11 @@ async function processSingleTrend({
       riskLevel
     );
 
-  // =========================================================
-  // 7. SUPPORTING CONTENT
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 7. SUPPORTING CONTENT
+  |--------------------------------------------------------------------------
+  */
 
   let supportingContent = null;
 
@@ -1340,9 +1437,11 @@ async function processSingleTrend({
     };
   }
 
-  // =========================================================
-  // 8. FINAL SHORT PRODUCTION
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 8. FINAL SHORT PRODUCTION
+  |--------------------------------------------------------------------------
+  */
 
   const productionStage =
     await runStage(
@@ -1390,9 +1489,11 @@ async function processSingleTrend({
   const production =
     productionStage.result;
 
-  // =========================================================
-  // 9. MANIFEST
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 9. MANIFEST
+  |--------------------------------------------------------------------------
+  */
 
   const manifest =
     createManifest({
@@ -1415,9 +1516,11 @@ async function processSingleTrend({
       riskLevel
     });
 
-  // =========================================================
-  // 10. FINAL VIDEO
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 10. FINAL VIDEO
+  |--------------------------------------------------------------------------
+  */
 
   const finalVideoFile =
     cleanText(
@@ -1451,9 +1554,11 @@ async function processSingleTrend({
     };
   }
 
-  // =========================================================
-  // 11. FINAL QA
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 11. FINAL QA
+  |--------------------------------------------------------------------------
+  */
 
   const qaStage =
     await runStage(
@@ -1521,9 +1626,11 @@ async function processSingleTrend({
     };
   }
 
-  // =========================================================
-  // 12. CEO APPROVAL
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 12. CEO APPROVAL
+  |--------------------------------------------------------------------------
+  */
 
   if (
     requiresCEOApproval
@@ -1598,9 +1705,11 @@ async function processSingleTrend({
     };
   }
 
-  // =========================================================
-  // 13. DRY RUN
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 13. DRY RUN
+  |--------------------------------------------------------------------------
+  */
 
   if (dryRun) {
     return {
@@ -1646,9 +1755,11 @@ async function processSingleTrend({
     };
   }
 
-  // =========================================================
-  // 14. READY FOR YOUTUBE
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | 14. READY FOR YOUTUBE
+  |--------------------------------------------------------------------------
+  */
 
   let learningReport = null;
 
@@ -1723,9 +1834,7 @@ export async function runAutomation({
     createRunId();
 
   const normalizedRegion =
-    normalizeRegion(
-      region
-    );
+    normalizeRegion(region);
 
   const requestedCount =
     normalizeRequestedVideos(
@@ -1757,13 +1866,15 @@ export async function runAutomation({
     };
   }
 
-  let automationAllowed = false;
+  let automationAllowed =
+    false;
 
   try {
     automationAllowed =
       canRunAutomation() === true;
   } catch {
-    automationAllowed = false;
+    automationAllowed =
+      false;
   }
 
   if (
@@ -1835,9 +1946,11 @@ export async function runAutomation({
       false
   });
 
-  // =========================================================
-  // TREND DISCOVERY
-  // =========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | TREND DISCOVERY
+  |--------------------------------------------------------------------------
+  */
 
   let selectedTrends = [];
 
@@ -1949,22 +2062,25 @@ export async function runAutomation({
       requestedVideos:
         requestedCount,
 
-      trends:
-        []
+      trends: []
     };
   }
 
   /*
-   * IMPORTANT:
-   *
-   * This loop allows multiple strong topics.
-   *
-   * 2 strong topics = 2 videos
-   * 5 strong topics = 5 videos
-   * 8 strong topics = 8 videos
-   *
-   * 5 is NOT a hard maximum.
-   */
+  |--------------------------------------------------------------------------
+  | MULTI-TOPIC PRODUCTION
+  |--------------------------------------------------------------------------
+  |
+  | The system does NOT stop at 5.
+  |
+  | 2 good topics = 2
+  | 5 good topics = 5
+  | 8 good topics = 8
+  |
+  | Actual quality/safety gates decide
+  | which topics can continue.
+  |--------------------------------------------------------------------------
+  */
 
   const results = [];
 
@@ -1998,7 +2114,9 @@ export async function runAutomation({
         state
       });
 
-    results.push(result);
+    results.push(
+      result
+    );
 
     await appendLog({
       parentRunId:
@@ -2057,6 +2175,8 @@ export async function runAutomation({
       (item) =>
         item.status ===
           "SAFETY_BLOCKED" ||
+        item.status ===
+          "COPYRIGHT_BLOCKED" ||
         item.status ===
           "DUPLICATE_BLOCKED"
     ).length;
@@ -2129,308 +2249,4 @@ export async function runAutomation({
     reviewVideos:
       reviewCount,
 
-    blockedVideos:
-      blockedCount,
-
-    failedVideos:
-      failedCount,
-
-    dailyCount:
-      state.dailyCount,
-
-    dailyTarget:
-      DAILY_TARGET_VIDEOS,
-
-    hardDailyMaximum:
-      false
-  });
-
-  return {
-    success:
-      producedCount > 0 ||
-      reviewCount > 0,
-
-    status:
-      producedCount > 0
-        ? "AUTOMATION_COMPLETED"
-        : reviewCount > 0
-          ? "AUTOMATION_REVIEW_QUEUE"
-          : "AUTOMATION_NO_PUBLISHABLE_RESULTS",
-
-    runId:
-      automationRunId,
-
-    region:
-      normalizedRegion,
-
-    requestedVideos:
-      requestedCount,
-
-    selectedTopics:
-      selectedTrends.length,
-
-    producedVideos:
-      producedCount,
-
-    readyVideos:
-      readyCount,
-
-    reviewVideos:
-      reviewCount,
-
-    blockedVideos:
-      blockedCount,
-
-    failedVideos:
-      failedCount,
-
-    dailyLimit,
-
-    hardDailyMaximum:
-      false,
-
-    maxDailyVideos:
-      null,
-
-    canContinueBeyondTarget:
-      true,
-
-    results
-  };
-}
-
-export async function runAutomationCycle(
-  options = {}
-) {
-  return runAutomation(
-    options
-  );
-}
-
-export async function previewAutomation(
-  options = {}
-) {
-  return runAutomation({
-    ...options,
-
-    dryRun: true
-  });
-}
-
-export async function getAutomationStatus() {
-  let state =
-    resetDailyStateIfNeeded(
-      await readState()
-    );
-
-  state =
-    await writeState(
-      state
-    );
-
-  let systemStatus = null;
-
-  try {
-    systemStatus =
-      getSystemStatus();
-  } catch (error) {
-    systemStatus = {
-      status: "UNKNOWN",
-
-      error:
-        error?.message ||
-        String(error)
-    };
-  }
-
-  let canRun = false;
-
-  try {
-    canRun =
-      canRunAutomation() === true;
-  } catch {
-    canRun = false;
-  }
-
-  let learningReport = null;
-
-  try {
-    learningReport =
-      await getContentLearningReport();
-  } catch {
-    learningReport = null;
-  }
-
-  return {
-    configured: true,
-
-    status:
-      canRun
-        ? "READY"
-        : "BLOCKED",
-
-    automation: {
-      canRun,
-
-      dailyTargetVideos:
-        DAILY_TARGET_VIDEOS,
-
-      maxDailyVideos:
-        null,
-
-      hardDailyMaximum:
-        false,
-
-      canContinueBeyondTarget:
-        true,
-
-      retriesPerStage:
-        MAX_STAGE_RETRIES
-    },
-
-    dailyLimit:
-      getDailyLimitStatus(
-        state
-      ),
-
-    state,
-
-    system:
-      systemStatus,
-
-    learning:
-      learningReport,
-
-    pipeline: [
-      "TREND_RADAR",
-      "RESEARCH",
-      "SCRIPT",
-      "SAFETY",
-      "COPYRIGHT",
-      "DUPLICATE",
-      "RISK_ENGINE",
-      "SUPPORTING_CONTENT",
-      "VOICE",
-      "VISUALS",
-      "VIDEO",
-      "CAPTIONS",
-      "FINAL_RENDER",
-      "QUALITY_ASSURANCE",
-      "CEO_APPROVAL",
-      "YOUTUBE_UPLOAD"
-    ],
-
-    publishing:
-      "SEPARATE_YOUTUBE_PIPELINE",
-
-    message:
-      "Automation orchestrator is ready. Five Shorts per day is the target, not a hard maximum. Additional strong, original, safe and eligible topics may continue beyond the target. Final video remains behind QA, upload guard, publish gate and CEO safety controls."
-  };
-}
-
-export async function resetAutomationDailyCounter() {
-  const state =
-    await readState();
-
-  const today =
-    new Date()
-      .toISOString()
-      .slice(0, 10);
-
-  const nextState =
-    await writeState({
-      ...state,
-
-      date:
-        today,
-
-      dailyCount:
-        0,
-
-      lastStatus:
-        "DAILY_COUNTER_RESET"
-    });
-
-  await appendLog({
-    status:
-      "DAILY_COUNTER_RESET"
-  });
-
-  return {
-    success: true,
-
-    status:
-      "DAILY_COUNTER_RESET",
-
-    state:
-      nextState
-  };
-}
-
-export async function getAutomationLog({
-  limit = 50
-} = {}) {
-  await ensureAutomationStorage();
-
-  try {
-    const raw =
-      await fs.readFile(
-        LOG_FILE,
-        "utf8"
-      );
-
-    const lines =
-      raw
-        .split("\n")
-        .filter(Boolean);
-
-    const safeLimit =
-      Math.max(
-        1,
-        Number(
-          limit || 50
-        )
-      );
-
-    return {
-      success: true,
-
-      items:
-        lines
-          .slice(-safeLimit)
-          .map(
-            (line) => {
-              try {
-                return JSON.parse(
-                  line
-                );
-              } catch {
-                return {
-                  raw: line
-                };
-              }
-            }
-          )
-    };
-  } catch {
-    return {
-      success: true,
-
-      items: []
-    };
-  }
-}
-
-export default {
-  runAutomation,
-
-  runAutomationCycle,
-
-  previewAutomation,
-
-  getAutomationStatus,
-
-  resetAutomationDailyCounter,
-
-  getAutomationLog
-};
+   
