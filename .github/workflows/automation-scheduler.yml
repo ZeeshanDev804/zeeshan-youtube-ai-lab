@@ -1,0 +1,103 @@
+name: ZEESHAN AI LABS - Automation Scheduler
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "Region to execute"
+        required: false
+        default: "USA"
+        type: choice
+        options:
+          - USA
+          - UK
+          - EUROPE
+
+      execute:
+        description: "Run real automation"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zeeshan-ai-automation
+  cancel-in-progress: false
+
+jobs:
+  automation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run scheduled automation
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_PRIVACY_STATUS: ${{ secrets.YOUTUBE_PRIVACY_STATUS }}
+          CEO_AUTOMATION_MODE: ${{ secrets.CEO_AUTOMATION_MODE }}
+          CEO_EMERGENCY_STOP: ${{ secrets.CEO_EMERGENCY_STOP }}
+
+        run: |
+          node --input-type=module -e "
+          import {
+            executeScheduledAutomation,
+            previewScheduledAutomation
+          } from './src/scheduledAutomationRunner.js';
+
+          const region =
+            process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
+              ? '${{ inputs.region }}'
+              : 'USA';
+
+          const executeInput =
+            process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
+              ? '${{ inputs.execute }}' === 'true'
+              : true;
+
+          const result = executeInput
+            ? await executeScheduledAutomation({ region })
+            : await previewScheduledAutomation({ region });
+
+          console.log(JSON.stringify(result, null, 2));
+
+          if (
+            result.status === 'EMERGENCY_STOP' ||
+            result.status === 'AUTOMATION_STOPPED'
+          ) {
+            process.exit(0);
+          }
+
+          if (
+            result.status === 'OUTSIDE_SCHEDULE' ||
+            result.status === 'DAILY_LIMIT_REACHED'
+          ) {
+            process.exit(0);
+          }
+
+          if (result.success !== true) {
+            process.exit(1);
+          }
+          "
