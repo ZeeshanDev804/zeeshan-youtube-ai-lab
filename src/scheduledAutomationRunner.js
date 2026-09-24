@@ -24,10 +24,25 @@ import {
 
 const DAILY_TARGET_VIDEOS = 5;
 
+
+/*
+|--------------------------------------------------------------------------
+| SUPPORTED REGIONS
+|--------------------------------------------------------------------------
+|
+| Daily target = 5
+| This is NOT a hard maximum.
+|
+| Strong/safe topics can continue beyond 5.
+|
+|--------------------------------------------------------------------------
+*/
+
 const REGIONS = [
   "USA",
   "UK",
-  "EUROPE"
+  "EUROPE",
+  "MIDDLE_EAST"
 ];
 
 
@@ -55,9 +70,8 @@ async function checkCEOState() {
     await getCEOAutomationStatus();
 
 
-  if (
-    status.emergencyStop
-  ) {
+  if (status.emergencyStop) {
+
     return {
       allowed: false,
 
@@ -71,10 +85,8 @@ async function checkCEOState() {
   }
 
 
-  if (
-    status.mode ===
-    "STOP"
-  ) {
+  if (status.mode === "STOP") {
+
     return {
       allowed: false,
 
@@ -116,11 +128,16 @@ export async function runScheduledRegion({
       .toUpperCase();
 
 
+  /*
+   * Validate region.
+   */
+
   if (
     !REGIONS.includes(
       normalizedRegion
     )
   ) {
+
     return {
       success: false,
 
@@ -142,6 +159,7 @@ export async function runScheduledRegion({
 
 
   if (!ceo.allowed) {
+
     return {
       success: false,
 
@@ -158,7 +176,7 @@ export async function runScheduledRegion({
 
 
   /*
-   * Check scheduler window.
+   * Check worldwide scheduler window.
    */
 
   const evaluation =
@@ -172,9 +190,8 @@ export async function runScheduledRegion({
     });
 
 
-  if (
-    !evaluation.allowed
-  ) {
+  if (!evaluation.allowed) {
+
     return {
       success: false,
 
@@ -196,12 +213,7 @@ export async function runScheduledRegion({
 
 
   /*
-   * IMPORTANT:
-   *
-   * This is NOT a daily 5-video limit.
-   *
-   * The reservation protects only
-   * this exact schedule slot.
+   * Create unique run ID.
    */
 
   const runId =
@@ -209,6 +221,14 @@ export async function runScheduledRegion({
       normalizedRegion
     );
 
+
+  /*
+   * Reserve this exact schedule slot.
+   *
+   * This does NOT create a daily video limit.
+   * It only prevents the same schedule slot
+   * from running twice.
+   */
 
   const reservation =
     await reserveScheduledRun({
@@ -221,9 +241,8 @@ export async function runScheduledRegion({
     });
 
 
-  if (
-    !reservation.success
-  ) {
+  if (!reservation.success) {
+
     return {
       success: false,
 
@@ -239,7 +258,11 @@ export async function runScheduledRegion({
 
       scheduleSlotId:
         reservation.scheduleSlotId ||
-        evaluation.scheduleSlotId
+        evaluation.scheduleSlotId,
+
+      reservationKey:
+        reservation.reservationKey ||
+        null
     };
   }
 
@@ -252,6 +275,7 @@ export async function runScheduledRegion({
     reservation.status ===
     "ALREADY_RESERVED"
   ) {
+
     return {
       success: true,
 
@@ -262,13 +286,14 @@ export async function runScheduledRegion({
         normalizedRegion,
 
       scheduleSlotId:
-        reservation.scheduleSlotId,
+        reservation.scheduleSlotId ||
+        evaluation.scheduleSlotId,
 
       reservationKey:
-        reservation.reservationKey,
+        reservation.reservationKey ||
+        null,
 
-      skipped:
-        true,
+      skipped: true,
 
       reason:
         "This schedule slot was already reserved."
@@ -287,42 +312,50 @@ export async function runScheduledRegion({
 
     reliabilityJob =
       await startReliabilityJob({
+
         jobType:
           "scheduled-automation",
 
         runId,
 
         metadata: {
+
           region:
             normalizedRegion,
 
           scheduleSlotId:
+            reservation.scheduleSlotId ||
             evaluation.scheduleSlotId,
 
           reservationKey:
-            evaluation.reservationKey,
+            reservation.reservationKey ||
+            evaluation.reservationKey ||
+            null,
 
           dailyTarget:
-            DAILY_TARGET_VIDEOS
+            DAILY_TARGET_VIDEOS,
+
+          targetIsHardMaximum:
+            false
         }
       });
 
 
     /*
-     * Final CEO check immediately
-     * before running the automation.
+     * Final CEO safety check immediately
+     * before automation starts.
      */
 
     const finalCEOCheck =
       await checkCEOState();
 
 
-    if (
-      !finalCEOCheck.allowed
-    ) {
+    if (!finalCEOCheck.allowed) {
 
       if (reliabilityJob) {
+
         await failReliabilityJob({
+
           jobId:
             reliabilityJob.jobId,
 
@@ -334,6 +367,7 @@ export async function runScheduledRegion({
 
 
       return {
+
         success: false,
 
         status:
@@ -351,9 +385,11 @@ export async function runScheduledRegion({
 
 
     /*
-     * Check automation start gate.
+     * Automation start gate.
      *
      * There is NO hard daily maximum.
+     *
+     * The target of 5 is informational.
      */
 
     const startCheck =
@@ -362,12 +398,12 @@ export async function runScheduledRegion({
       });
 
 
-    if (
-      !startCheck.allowed
-    ) {
+    if (!startCheck.allowed) {
 
       if (reliabilityJob) {
+
         await failReliabilityJob({
+
           jobId:
             reliabilityJob.jobId,
 
@@ -379,6 +415,7 @@ export async function runScheduledRegion({
 
 
       return {
+
         success: false,
 
         status:
@@ -396,18 +433,21 @@ export async function runScheduledRegion({
 
 
     /*
-     * Run the actual automation cycle.
+     * Run actual automation cycle.
      *
-     * The orchestrator itself decides
-     * whether a topic is safe/good enough.
+     * The orchestrator decides whether
+     * the topic is good, original and safe.
      */
 
     const result =
       await runAutomationCycle({
+
         region:
           normalizedRegion,
 
-        runId
+        runId,
+
+        requestedVideos
       });
 
 
@@ -418,6 +458,7 @@ export async function runScheduledRegion({
     if (reliabilityJob) {
 
       await completeReliabilityJob({
+
         jobId:
           reliabilityJob.jobId,
 
@@ -427,6 +468,7 @@ export async function runScheduledRegion({
 
 
     return {
+
       success: true,
 
       status:
@@ -438,22 +480,24 @@ export async function runScheduledRegion({
       runId,
 
       scheduleSlotId:
+        reservation.scheduleSlotId ||
         evaluation.scheduleSlotId,
 
       reservationKey:
-        evaluation.reservationKey,
+        reservation.reservationKey ||
+        evaluation.reservationKey ||
+        null,
 
       dailyTarget:
         DAILY_TARGET_VIDEOS,
-
-      /*
-       * Target is informational only.
-       */
 
       targetIsHardMaximum:
         false,
 
       canContinueBeyondTarget:
+        true,
+
+      qualityOverQuantity:
         true,
 
       result
@@ -467,6 +511,7 @@ export async function runScheduledRegion({
       try {
 
         await failReliabilityJob({
+
           jobId:
             reliabilityJob.jobId,
 
@@ -476,12 +521,15 @@ export async function runScheduledRegion({
         });
 
       } catch {
-        // Do not hide the original error.
+        /*
+         * Do not hide original error.
+         */
       }
     }
 
 
     return {
+
       success: false,
 
       status:
@@ -507,8 +555,11 @@ export async function runScheduledRegion({
 */
 
 export async function runScheduledAutomation({
+
   requestedVideos = 1,
+
   date = new Date()
+
 } = {}) {
 
   const results = [];
@@ -520,6 +571,7 @@ export async function runScheduledAutomation({
 
     const result =
       await runScheduledRegion({
+
         region,
 
         requestedVideos,
@@ -534,12 +586,17 @@ export async function runScheduledAutomation({
   }
 
 
+  const successfulRuns =
+    results.filter(
+      item =>
+        item.success
+    );
+
+
   return {
+
     success:
-      results.some(
-        (item) =>
-          item.success
-      ),
+      successfulRuns.length > 0,
 
     status:
       "SCHEDULED_AUTOMATION_COMPLETE",
@@ -553,6 +610,15 @@ export async function runScheduledAutomation({
     canContinueBeyondTarget:
       true,
 
+    qualityOverQuantity:
+      true,
+
+    regionsAttempted:
+      REGIONS.length,
+
+    successfulRegions:
+      successfulRuns.length,
+
     results
   };
 }
@@ -563,31 +629,89 @@ export async function runScheduledAutomation({
 | PREVIEW
 |--------------------------------------------------------------------------
 |
-| Preview does not generate/publish content.
+| Preview does NOT generate or publish content.
+|
 |--------------------------------------------------------------------------
 */
 
 export async function previewScheduledAutomation({
+
+  region = null,
+
   date = new Date()
+
 } = {}) {
+
+  const regionsToPreview =
+    region
+      ? [
+          cleanText(region)
+            .toUpperCase()
+        ]
+      : REGIONS;
+
 
   const previews = [];
 
 
   for (
-    const region of REGIONS
+    const currentRegion
+      of regionsToPreview
   ) {
+
+    if (
+      !REGIONS.includes(
+        currentRegion
+      )
+    ) {
+
+      previews.push({
+
+        region:
+          currentRegion,
+
+        allowed: false,
+
+        status:
+          "INVALID_REGION",
+
+        reason:
+          "Region is not supported.",
+
+        scheduleSlotId:
+          null,
+
+        reservationKey:
+          null,
+
+        dailyTarget:
+          DAILY_TARGET_VIDEOS,
+
+        targetIsHardMaximum:
+          false,
+
+        canContinueBeyondTarget:
+          true
+      });
+
+      continue;
+    }
+
 
     const evaluation =
       await evaluateSchedule({
-        region,
+
+        region:
+          currentRegion,
 
         date
       });
 
 
     previews.push({
-      region,
+
+      region:
+        currentRegion,
 
       allowed:
         evaluation.allowed,
@@ -614,12 +738,16 @@ export async function previewScheduledAutomation({
         false,
 
       canContinueBeyondTarget:
+        true,
+
+      qualityOverQuantity:
         true
     });
   }
 
 
   return {
+
     success: true,
 
     status:
@@ -630,6 +758,12 @@ export async function previewScheduledAutomation({
 
     targetIsHardMaximum:
       false,
+
+    canContinueBeyondTarget:
+      true,
+
+    qualityOverQuantity:
+      true,
 
     previews
   };
@@ -643,8 +777,10 @@ export async function previewScheduledAutomation({
 */
 
 export async function emergencyStopAutomation(
+
   reason =
     "Emergency stop requested by CEO."
+
 ) {
 
   return activateEmergencyStop(
@@ -666,6 +802,7 @@ export async function getScheduledRunnerStatus() {
 
 
   return {
+
     success: true,
 
     runner:
@@ -687,6 +824,7 @@ export async function getScheduledRunnerStatus() {
       true,
 
     ceo: {
+
       mode:
         ceo.mode,
 
