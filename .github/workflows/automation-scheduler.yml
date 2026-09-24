@@ -2,13 +2,15 @@ name: ZEESHAN AI LABS - Automation Scheduler
 
 on:
   schedule:
+    # Run frequently so eligible worldwide schedule windows
+    # can be detected without making 5 videos/day a hard limit.
     - cron: "*/15 * * * *"
 
   workflow_dispatch:
     inputs:
       region:
-        description: "Region to execute"
-        required: false
+        description: "Region to run"
+        required: true
         default: "ALL"
         type: choice
         options:
@@ -18,118 +20,202 @@ on:
           - EUROPE
 
       execute:
-        description: "Run real automation"
-        required: false
+        description: "Execute automation"
+        required: true
         default: false
         type: boolean
+
 
 permissions:
   contents: write
 
+
 concurrency:
-  group: zeeshan-ai-automation
+  group: zeeshan-ai-automation-scheduler
   cancel-in-progress: false
 
+
 jobs:
+
   automation:
+
     runs-on: ubuntu-latest
+
     timeout-minutes: 30
 
+
     steps:
+
+      # ------------------------------------------------------------
+      # CHECKOUT
+      # ------------------------------------------------------------
 
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
+
+      # ------------------------------------------------------------
+      # NODE
+      # ------------------------------------------------------------
+
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
+
+      # ------------------------------------------------------------
+      # INSTALL
+      # ------------------------------------------------------------
+
       - name: Install dependencies
         run: npm install
 
-      - name: Run scheduled automation
+
+      # ------------------------------------------------------------
+      # ENVIRONMENT
+      # ------------------------------------------------------------
+
+      - name: Prepare automation environment
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
+
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          YOUTUBE_PRIVACY_STATUS: ${{ secrets.YOUTUBE_PRIVACY_STATUS }}
+
           CEO_AUTOMATION_MODE: ${{ secrets.CEO_AUTOMATION_MODE }}
           CEO_EMERGENCY_STOP: ${{ secrets.CEO_EMERGENCY_STOP }}
 
         run: |
+          echo "ZEESHAN AI LABS automation environment prepared."
+
+          if [ -n "$AI_API_KEY" ]; then
+            echo "Gemini/API key: CONFIGURED"
+          else
+            echo "Gemini/API key: NOT_CONFIGURED"
+          fi
+
+          if [ -n "$ELEVENLABS_API_KEY" ] && [ -n "$ELEVENLABS_VOICE_ID" ]; then
+            echo "ElevenLabs: CONFIGURED"
+          else
+            echo "ElevenLabs: NOT_CONFIGURED"
+          fi
+
+          if [ -n "$YOUTUBE_CLIENT_ID" ] && [ -n "$YOUTUBE_CLIENT_SECRET" ] && [ -n "$YOUTUBE_REFRESH_TOKEN" ]; then
+            echo "YouTube OAuth: CONFIGURED"
+          else
+            echo "YouTube OAuth: NOT_CONFIGURED"
+          fi
+
+
+      # ------------------------------------------------------------
+      # RUN AUTOMATION
+      # ------------------------------------------------------------
+
+      - name: Run worldwide automation
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+
+          CEO_AUTOMATION_MODE: ${{ secrets.CEO_AUTOMATION_MODE }}
+          CEO_EMERGENCY_STOP: ${{ secrets.CEO_EMERGENCY_STOP }}
+
+          INPUT_REGION: ${{ github.event.inputs.region }}
+          INPUT_EXECUTE: ${{ github.event.inputs.execute }}
+
+        run: |
           node --input-type=module <<'NODE'
+
           import {
-            executeScheduledAutomation,
+            runScheduledRegion,
+            runScheduledAutomation,
             previewScheduledAutomation
           } from "./src/scheduledAutomationRunner.js";
 
-          const isManual =
-            process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
 
-          const requestedRegion =
-            isManual
-              ? "${{ inputs.region }}"
-              : "ALL";
+          const region =
+            process.env.INPUT_REGION || "ALL";
 
-          const executeInput =
-            isManual
-              ? "${{ inputs.execute }}" === "true"
-              : true;
 
-          const regions =
-            requestedRegion === "ALL"
-              ? ["USA", "UK", "EUROPE"]
-              : [requestedRegion];
+          const execute =
+            String(
+              process.env.INPUT_EXECUTE || "false"
+            ).toLowerCase() === "true";
 
-          const results = [];
 
-          for (const region of regions) {
-            const result = executeInput
-              ? await executeScheduledAutomation({ region })
-              : await previewScheduledAutomation({ region });
+          console.log("");
+          console.log("==============================================");
+          console.log(" ZEESHAN AI LABS - AUTOMATION SCHEDULER");
+          console.log("==============================================");
+          console.log("Region:", region);
+          console.log("Execute:", execute);
+          console.log("Daily target: 5");
+          console.log("Hard daily maximum: DISABLED");
+          console.log("More than 5 allowed when good topics exist.");
+          console.log("==============================================");
+          console.log("");
 
-            results.push({
-              region,
-              result
-            });
+
+          let result;
+
+
+          if (!execute) {
+
+            console.log(
+              "Preview mode - no content will be generated or published."
+            );
+
+            result =
+              await previewScheduledAutomation();
+
+          } else if (region === "ALL") {
+
+            result =
+              await runScheduledAutomation();
+
+          } else {
+
+            result =
+              await runScheduledRegion({
+                region
+              });
           }
+
 
           console.log(
             JSON.stringify(
-              {
-                success: true,
-                mode: executeInput ? "EXECUTE" : "DRY_RUN",
-                regions,
-                results
-              },
+              result,
               null,
               2
             )
           );
 
-          const hardFailures =
-            results.filter(
-              ({ result }) =>
-                result?.success !== true &&
-                ![
-                  "OUTSIDE_SCHEDULE",
-                  "DAILY_LIMIT_REACHED",
-                  "EMERGENCY_STOP",
-                  "AUTOMATION_STOPPED",
-                  "SCHEDULE_NOT_ELIGIBLE"
-                ].includes(result?.status)
-            );
 
-          if (hardFailures.length > 0) {
-            process.exit(1);
+          if (
+            result?.success === false &&
+            result?.status !== "SCHEDULE_PREVIEW"
+          ) {
+            process.exitCode = 1;
           }
+
           NODE
+
+
+      # ------------------------------------------------------------
+      # PERSIST AUTOMATION STATE
+      # ------------------------------------------------------------
 
       - name: Persist automation state
         if: always()
@@ -139,7 +225,7 @@ jobs:
           git config user.name "ZEESHAN AI LABS Automation"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add storage/automation/
+          git add storage/automation
 
           if git diff --cached --quiet; then
             echo "No automation state changes to commit."
