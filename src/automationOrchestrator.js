@@ -3,7 +3,9 @@ import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import config from "./config.js";
+import {
+  config
+} from "./config.js";
 
 import {
   collectTrends
@@ -48,15 +50,24 @@ import {
   getContentLearningReport
 } from "./contentLearningIntegration.js";
 
+const AUTOMATION_DIR =
+  "./storage/automation";
+
 const STATE_FILE =
-  process.env.AUTOMATION_STATE_FILE ||
-  "./storage/automation/automation-state.json";
+  path.join(
+    AUTOMATION_DIR,
+    "automation-state.json"
+  );
 
 const LOG_FILE =
-  process.env.AUTOMATION_LOG_FILE ||
-  "./storage/automation/automation-log.jsonl";
+  path.join(
+    AUTOMATION_DIR,
+    "automation-log.jsonl"
+  );
 
-const DEFAULT_MAX_RETRIES = 2;
+const MAX_DAILY_VIDEOS = 5;
+
+const MAX_STAGE_RETRIES = 2;
 
 function cleanText(value = "") {
   return String(value)
@@ -64,36 +75,29 @@ function cleanText(value = "") {
     .trim();
 }
 
-function createRunId() {
-  return `automation_${Date.now()}_${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
-}
-
-function todayKey() {
-  return new Date()
-    .toISOString()
-    .slice(0, 10);
-}
-
-function safeNumber(value, fallback = 0) {
-  const number = Number(value);
-
-  return Number.isFinite(number)
-    ? number
-    : fallback;
-}
-
-async function ensureStorage() {
-  await fs.mkdir(
-    path.dirname(STATE_FILE),
-    {
-      recursive: true
-    }
+function getConfigValue(
+  key,
+  fallback = undefined
+) {
+  return (
+    config?.[key] ??
+    process.env[key] ??
+    fallback
   );
+}
 
+function createRunId() {
+  return (
+    `auto_${Date.now()}_` +
+    Math.random()
+      .toString(36)
+      .slice(2, 8)
+  );
+}
+
+async function ensureAutomationStorage() {
   await fs.mkdir(
-    path.dirname(LOG_FILE),
+    AUTOMATION_DIR,
     {
       recursive: true
     }
@@ -101,7 +105,7 @@ async function ensureStorage() {
 }
 
 async function readState() {
-  await ensureStorage();
+  await ensureAutomationStorage();
 
   try {
     const raw =
@@ -110,1112 +114,211 @@ async function readState() {
         "utf8"
       );
 
-    const parsed =
+    const state =
       JSON.parse(raw);
 
-    if (!parsed || typeof parsed !== "object") {
-      throw new Error(
-        "Invalid automation state."
-      );
-    }
-
-    return parsed;
-  } catch (error) {
-    if (error.code !== "ENOENT") {
-      throw error;
-    }
-
     return {
-      date: todayKey(),
-      createdToday: 0,
-      completedToday: 0,
-      failedToday: 0,
-      reviewToday: 0,
-      lastRunAt: null,
+      dailyCount:
+        Number(state.dailyCount || 0),
+
+      date:
+        state.date ||
+        new Date()
+          .toISOString()
+          .slice(0, 10),
+
+      lastRun:
+        state.lastRun || null,
+
+      lastStatus:
+        state.lastStatus || null,
+
+      lastRunId:
+        state.lastRunId || null,
+
+      updatedAt:
+        state.updatedAt || null
+    };
+  } catch {
+    return {
+      dailyCount: 0,
+
+      date:
+        new Date()
+          .toISOString()
+          .slice(0, 10),
+
+      lastRun: null,
+
       lastStatus: null,
-      lastRunId: null
+
+      lastRunId: null,
+
+      updatedAt: null
     };
   }
 }
 
 async function writeState(state) {
-  await ensureStorage();
+  await ensureAutomationStorage();
+
+  const nextState = {
+    ...state,
+    updatedAt:
+      new Date().toISOString()
+  };
 
   await fs.writeFile(
     STATE_FILE,
     JSON.stringify(
-      state,
+      nextState,
       null,
       2
     ),
     "utf8"
   );
+
+  return nextState;
 }
 
-async function getDailyState() {
-  const state =
-    await readState();
+async function appendLog(entry) {
+  await ensureAutomationStorage();
 
+  await fs.appendFile(
+    LOG_FILE,
+    `${JSON.stringify({
+      ...entry,
+      loggedAt:
+        new Date().toISOString()
+    })}\n`,
+    "utf8"
+  );
+}
+
+function resetDailyStateIfNeeded(
+  state
+) {
   const today =
-    todayKey();
+    new Date()
+      .toISOString()
+      .slice(0, 10);
 
   if (state.date !== today) {
     return {
+      ...state,
       date: today,
-      createdToday: 0,
-      completedToday: 0,
-      failedToday: 0,
-      reviewToday: 0,
-      lastRunAt: null,
-      lastStatus: null,
-      lastRunId: null
+      dailyCount: 0
     };
   }
 
   return state;
 }
 
-async function updateDailyState(patch = {}) {
-  const state =
-    await getDailyState();
-
-  const next = {
-    ...state,
-    ...patch
-  };
-
-  await writeState(next);
-
-  return next;
-}
-
-async function appendLog(entry = {}) {
-  await ensureStorage();
-
-  const line =
-    JSON.stringify({
-      timestamp:
-        new Date().toISOString(),
-      ...entry
-    }) + "\n";
-
-  await fs.appendFile(
-    LOG_FILE,
-    line,
-    "utf8"
-  );
-}
-
-function blockedResult({
-  runId,
-  stage,
-  reason,
-  details = null,
-  nextAction = null
-} = {}) {
+function getDailyLimitStatus(
+  state
+) {
   return {
-    success: false,
-    status: "BLOCKED",
-    runId,
-    stage,
-    reason,
-    details,
-    nextAction,
-    createdAt:
-      new Date().toISOString()
-  };
-}
+    limit:
+      MAX_DAILY_VIDEOS,
 
-function reviewResult({
-  runId,
-  stage,
-  reason,
-  details = null,
-  approvalRequest = null
-} = {}) {
-  return {
-    success: true,
-    status: "CEO_REVIEW_REQUIRED",
-    runId,
-    stage,
-    reason,
-    details,
-    approvalRequest,
-    createdAt:
-      new Date().toISOString()
-  };
-}
+    used:
+      Number(state.dailyCount || 0),
 
-function getResearchStatus(
-  researchResult
-) {
-  return (
-    researchResult?.result?.status ||
-    researchResult?.status ||
-    "UNKNOWN"
-  );
-}
-
-function getResearchSources(
-  researchResult
-) {
-  if (
-    Array.isArray(
-      researchResult?.result?.sources
-    )
-  ) {
-    return researchResult.result.sources;
-  }
-
-  if (
-    Array.isArray(
-      researchResult?.sources
-    )
-  ) {
-    return researchResult.sources;
-  }
-
-  return [];
-}
-
-function getResearchConfidence(
-  researchResult
-) {
-  return safeNumber(
-    researchResult?.result?.confidence ??
-      researchResult?.confidence,
-    0
-  );
-}
-
-function getRiskLevel(
-  safety,
-  copyright,
-  duplicate
-) {
-  if (
-    safety?.level === "HIGH"
-  ) {
-    return "HIGH";
-  }
-
-  if (
-    copyright?.status === "BLOCK" ||
-    duplicate?.status === "BLOCK"
-  ) {
-    return "HIGH";
-  }
-
-  if (
-    safety?.level === "MEDIUM" ||
-    copyright?.status === "REVIEW" ||
-    duplicate?.status === "REVIEW"
-  ) {
-    return "MEDIUM";
-  }
-
-  return "LOW";
-}
-
-function buildManifest({
-  runId,
-  topic,
-  script,
-  description,
-  language,
-  voice,
-  visuals,
-  visualVideo,
-  finalVideo,
-  captions
-} = {}) {
-  return {
-    id:
-      `production_${runId}`,
-
-    metadata: {
-      topic:
-        cleanText(topic),
-
-      title:
-        cleanText(topic),
-
-      description:
-        cleanText(description),
-
-      language,
-
-      estimatedDurationSeconds:
-        null,
-
-      targetDurationSeconds:
-        null
-    },
-
-    voice: {
-      id:
-        voice?.outputFile ||
-        `voice_${runId}`,
-
-      status:
-        voice?.success
-          ? "READY"
-          : "FAILED",
-
-      provider:
-        voice?.provider ||
-        "unknown",
-
-      outputFile:
-        voice?.outputFile ||
-        null
-    },
-
-    visuals: {
-      provider:
-        visuals?.provider ||
-        "unknown",
-
-      sceneCount:
-        visuals?.sceneCount ||
+    remaining:
+      Math.max(
         0,
+        MAX_DAILY_VIDEOS -
+          Number(state.dailyCount || 0)
+      ),
 
-      jobs:
-        visuals?.scenes ||
-        [],
-
-      timeline: []
-    },
-
-    video: {
-      id:
-        `video_${runId}`,
-
-      status:
-        visualVideo?.success
-          ? "READY"
-          : "FAILED",
-
-      width:
-        1080,
-
-      height:
-        1920,
-
-      fps:
-        30,
-
-      durationSeconds:
-        null,
-
-      outputFile:
-        finalVideo?.outputFile ||
-        visualVideo?.outputFile ||
-        null
-    },
-
-    captions: {
-      status:
-        captions?.status ||
-        "UNKNOWN",
-
-      format:
-        captions?.format ||
-        "SRT",
-
-      outputFile:
-        captions?.outputFile ||
-        null,
-
-      segmentCount:
-        safeNumber(
-          captions?.segmentCount,
-          0
-        )
-    },
-
-    productionOrder: [
-      "SCRIPT",
-      "VOICE",
-      "VISUALS",
-      "VIDEO_RENDER",
-      "FINAL_AUDIO_VIDEO_MERGE",
-      "CAPTIONS",
-      "QUALITY_CHECK",
-      "CEO_GATE",
-      "PUBLISH"
-    ],
-
-    createdAt:
-      new Date().toISOString()
+    reached:
+      Number(state.dailyCount || 0) >=
+      MAX_DAILY_VIDEOS
   };
 }
 
-async function retryStage(
-  stage,
-  operation,
-  maxRetries = DEFAULT_MAX_RETRIES
+async function runStage(
+  stageName,
+  handler,
+  {
+    maxRetries =
+      MAX_STAGE_RETRIES
+  } = {}
 ) {
   let lastError = null;
 
   for (
     let attempt = 1;
-    attempt <= maxRetries + 1;
+    attempt <= maxRetries;
     attempt += 1
   ) {
     try {
       const result =
-        await operation(attempt);
+        await handler();
+
+      if (
+        result &&
+        result.success === false
+      ) {
+        lastError =
+          result.error ||
+          result.errors ||
+          `${stageName} failed.`;
+
+        if (
+          attempt <
+          maxRetries
+        ) {
+          continue;
+        }
+
+        return {
+          success: false,
+
+          stage:
+            stageName,
+
+          attempts:
+            attempt,
+
+          error:
+            lastError,
+
+          result
+        };
+      }
 
       return {
         success: true,
-        stage,
-        attempt,
+
+        stage:
+          stageName,
+
+        attempts:
+          attempt,
+
         result
       };
     } catch (error) {
-      lastError = error;
-
-      await appendLog({
-        type: "STAGE_RETRY",
-        stage,
-        attempt,
-        error:
-          error?.message ||
-          String(error)
-      });
+      lastError =
+        error?.message ||
+        String(error);
 
       if (
-        attempt <= maxRetries
-      ) {
-        await new Promise(
-          (resolve) =>
-            setTimeout(
-              resolve,
-              750 * attempt
-            )
-        );
-      }
-    }
-  }
-
-  return {
-    success: false,
-    stage,
-    attempts:
-      maxRetries + 1,
-    error:
-      lastError?.message ||
-      "Stage failed."
-  };
-}
-
-async function selectTopic({
-  topic
-} = {}) {
-  if (
-    topic &&
-    typeof topic === "object" &&
-    cleanText(topic.title)
-  ) {
-    return {
-      success: true,
-      source: "INPUT",
-      topic: {
-        ...topic,
-        title:
-          cleanText(topic.title)
-      }
-    };
-  }
-
-  const trendResult =
-    await collectTrends();
-
-  if (
-    !trendResult ||
-    !Array.isArray(
-      trendResult.topics
-    ) ||
-    trendResult.topics.length === 0
-  ) {
-    return {
-      success: false,
-      status: "NO_TRENDS",
-      trendResult
-    };
-  }
-
-  const selected =
-    trendResult.topics[0];
-
-  return {
-    success: true,
-    source: "TREND_RADAR",
-    topic: selected,
-    trendResult
-  };
-}
-
-export async function runAutomationCycle({
-  topic = null,
-  script = "",
-  existingContent = [],
-  language =
-    config.audience.language === "en"
-      ? "en-US"
-      : config.audience.language,
-  voiceId,
-  maxRetries =
-    DEFAULT_MAX_RETRIES
-} = {}) {
-  const runId =
-    createRunId();
-
-  await appendLog({
-    type: "AUTOMATION_START",
-    runId
-  });
-
-  /*
-   * ---------------------------------------------------------
-   * 0. CEO SYSTEM GATE
-   * ---------------------------------------------------------
-   */
-
-  if (!canRunAutomation()) {
-    const result =
-      blockedResult({
-        runId,
-        stage: "CEO_CONTROL",
-        reason:
-          "Automation is stopped by CEO control.",
-        nextAction:
-          "Set system mode to AUTO or REVIEW and disable Emergency STOP when safe."
-      });
-
-    await appendLog({
-      type: "AUTOMATION_BLOCKED",
-      runId,
-      result
-    });
-
-    return result;
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 1. DAILY LIMIT
-   * ---------------------------------------------------------
-   */
-
-  const daily =
-    await getDailyState();
-
-  const maxDaily =
-    Math.min(
-      5,
-      Math.max(
-        1,
-        safeNumber(
-          config.system.maxDailyVideos,
-          5
-        )
-      )
-    );
-
-  if (
-    daily.createdToday >=
-    maxDaily
-  ) {
-    const result =
-      blockedResult({
-        runId,
-        stage: "DAILY_LIMIT",
-        reason:
-          `Daily production limit reached: ${maxDaily}.`,
-        nextAction:
-          "Wait for the next UTC day before starting another production cycle."
-      });
-
-    await appendLog({
-      type: "DAILY_LIMIT_BLOCK",
-      runId,
-      result
-    });
-
-    return result;
-  }
-
-  await updateDailyState({
-    createdToday:
-      daily.createdToday + 1,
-    lastRunAt:
-      new Date().toISOString(),
-    lastRunId:
-      runId,
-    lastStatus:
-      "RUNNING"
-  });
-
-  /*
-   * ---------------------------------------------------------
-   * 2. TOPIC / TREND
-   * ---------------------------------------------------------
-   */
-
-  const topicSelection =
-    await retryStage(
-      "TOPIC",
-      () =>
-        selectTopic({
-          topic
-        }),
-      maxRetries
-    );
-
-  if (!topicSelection.success) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "TOPIC_FAILED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "TOPIC",
-      reason:
-        topicSelection.error,
-      details:
-        topicSelection
-    });
-  }
-
-  const selectedTopic =
-    topicSelection.result.topic;
-
-  /*
-   * ---------------------------------------------------------
-   * 3. RESEARCH
-   * ---------------------------------------------------------
-   */
-
-  const researchRun =
-    await retryStage(
-      "RESEARCH",
-      () =>
-        researchTopic(
-          selectedTopic
-        ),
-      maxRetries
-    );
-
-  if (!researchRun.success) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "RESEARCH_FAILED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "RESEARCH",
-      reason:
-        "Research stage failed.",
-      details:
-        researchRun
-    });
-  }
-
-  const research =
-    researchRun.result;
-
-  const researchStatus =
-    getResearchStatus(
-      research
-    );
-
-  const researchSources =
-    getResearchSources(
-      research
-    );
-
-  const researchConfidence =
-    getResearchConfidence(
-      research
-    );
-
-  if (
-    researchStatus ===
-      "INSUFFICIENT_RESEARCH" ||
-    researchStatus ===
-      "READY_FOR_RESEARCH_PROVIDER"
-  ) {
-    const result =
-      reviewResult({
-        runId,
-        stage: "RESEARCH",
-        reason:
-          "Verified live research is not available.",
-        details: {
-          status:
-            researchStatus,
-          confidence:
-            researchConfidence,
-          sourceCount:
-            researchSources.length
-        }
-      });
-
-    await updateDailyState({
-      reviewToday:
-        daily.reviewToday + 1,
-      lastStatus:
-        "RESEARCH_REVIEW"
-    });
-
-    await appendLog({
-      type: "RESEARCH_REVIEW",
-      runId,
-      result
-    });
-
-    return result;
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 4. SCRIPT
-   * ---------------------------------------------------------
-   */
-
-  let finalScript =
-    cleanText(script);
-
-  let generatedScript =
-    null;
-
-  if (!finalScript) {
-    const scriptRun =
-      await retryStage(
-        "SCRIPT",
-        () =>
-          generateScript({
-            ...selectedTopic,
-            research
-          }),
+        attempt <
         maxRetries
-      );
+      ) {
+        continue;
+      }
 
-    if (!scriptRun.success) {
-      await updateDailyState({
-        failedToday:
-          daily.failedToday + 1,
-        lastStatus:
-          "SCRIPT_FAILED"
-      });
+      return {
+        success: false,
 
-      return blockedResult({
-        runId,
-        stage: "SCRIPT",
-        reason:
-          "Script generation failed.",
-        details:
-          scriptRun
-      });
-    }
+        stage:
+          stageName,
 
-    generatedScript =
-      scriptRun.result;
+        attempts:
+          attempt,
 
-    finalScript =
-      cleanText(
-        generatedScript.script
-      );
-  }
-
-  if (
-    finalScript.length < 100
-  ) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "SCRIPT_INVALID"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "SCRIPT",
-      reason:
-        "Generated script is too short.",
-      nextAction:
-        "Generate a complete original script before production."
-    });
-  }
-
-  const title =
-    cleanText(
-      generatedScript?.title ||
-      selectedTopic.title
-    );
-
-  const description =
-    cleanText(
-      generatedScript?.description ||
-      selectedTopic.description ||
-      ""
-    );
-
-  /*
-   * ---------------------------------------------------------
-   * 5. SAFETY
-   * ---------------------------------------------------------
-   */
-
-  const safety =
-    analyzeSafety({
-      title,
-      script:
-        finalScript,
-      description,
-      research
-    });
-
-  if (
-    safety?.level === "HIGH" ||
-    safety?.action === "BLOCK"
-  ) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "SAFETY_BLOCKED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "SAFETY",
-      reason:
-        "Safety guard blocked this content.",
-      details:
-        safety
-    });
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 6. COPYRIGHT
-   * ---------------------------------------------------------
-   */
-
-  let copyright;
-
-  try {
-    copyright =
-      checkCopyrightSafety({
-        title,
-        script:
-          finalScript,
-        sources:
-          researchSources,
-        metadata: {
-          category:
-            selectedTopic.category ||
-            "general",
-
-          region:
-            selectedTopic.region ||
-            null
-        }
-      });
-  } catch (error) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "COPYRIGHT_FAILED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "COPYRIGHT",
-      reason:
-        "Copyright safety check failed.",
-      details:
-        error.message
-    });
-  }
-
-  if (
-    copyright?.status ===
-    "BLOCK"
-  ) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "COPYRIGHT_BLOCKED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "COPYRIGHT",
-      reason:
-        copyright.reason ||
-        "Copyright guard blocked this content.",
-      details:
-        copyright
-    });
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 7. DUPLICATE / SIMILARITY
-   * ---------------------------------------------------------
-   */
-
-  let duplicate;
-
-  try {
-    duplicate =
-      checkDuplicateContent({
-        title,
-        script:
-          finalScript,
-        existingContent
-      });
-  } catch (error) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "DUPLICATE_CHECK_FAILED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "DUPLICATE",
-      reason:
-        "Duplicate check failed.",
-      details:
-        error.message
-    });
-  }
-
-  if (
-    duplicate?.status ===
-    "BLOCK"
-  ) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "DUPLICATE_BLOCKED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "DUPLICATE",
-      reason:
-        duplicate.reason ||
-        "Duplicate content detected.",
-      details:
-        duplicate
-    });
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 8. SUPPORTING CONTENT
-   * ---------------------------------------------------------
-   */
-
-  let supportingContent = null;
-
-  try {
-    supportingContent =
-      prepareSupportingContent({
-        topic: title,
-        existingContent
-      });
-
-    if (
-      supportingContent &&
-      supportingContent.success === false
-    ) {
-      await appendLog({
-        type:
-          "SUPPORTING_CONTENT_REVIEW",
-        runId,
-        result:
-          supportingContent
-      });
-    }
-  } catch (error) {
-    supportingContent = {
-      success: false,
-      status:
-        "SUPPORTING_CONTENT_FAILED",
-      error:
-        error?.message ||
-        String(error)
-    };
-
-    await appendLog({
-      type:
-        "SUPPORTING_CONTENT_ERROR",
-      runId,
-      error:
-        supportingContent.error
-    });
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 9. RISK / CEO REVIEW DECISION
-   * ---------------------------------------------------------
-   */
-
-  const riskLevel =
-    getRiskLevel(
-      safety,
-      copyright,
-      duplicate
-    );
-
-  const reviewReasons = [];
-
-  if (
-    safety?.level ===
-      "MEDIUM"
-  ) {
-    reviewReasons.push(
-      "Safety review required."
-    );
-  }
-
-  if (
-    copyright?.status ===
-      "REVIEW"
-  ) {
-    reviewReasons.push(
-      "Copyright review required."
-    );
-  }
-
-  if (
-    duplicate?.status ===
-      "REVIEW"
-  ) {
-    reviewReasons.push(
-      "Similarity review required."
-    );
-  }
-
-  if (
-    researchConfidence < 70
-  ) {
-    reviewReasons.push(
-      "Research confidence is below the production threshold."
-    );
-  }
-
-  if (
-    config.system.ceoApprovalRequired
-  ) {
-    reviewReasons.push(
-      "CEO approval is enabled."
-    );
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 10. REAL PRODUCTION
-   * ---------------------------------------------------------
-   */
-
-  const productionRun =
-    await retryStage(
-      "FINAL_PRODUCTION",
-      () =>
-        produceFinalShort({
-          topic: title,
-          script:
-            finalScript,
-          language,
-          voiceId,
-          durationPerScene: 5,
-          fps:
-            config.video.fps
-        }),
-      maxRetries
-    );
-
-  if (!productionRun.success) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "PRODUCTION_FAILED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "FINAL_PRODUCTION",
-      reason:
-        "Final Short production failed.",
-      details:
-        productionRun
-    });
-  }
-
-  const production =
-    productionRun.result;
-
-  if (
-    production?.success !== true
-  ) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "PRODUCTION_FAILED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "FINAL_PRODUCTION",
-      reason:
-        "Final Short production returned a failure.",
-      details:
-        production
-    });
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 11. FINAL QA
-   * ---------------------------------------------------------
-   */
-
-  const manifest =
-    buildManifest({
-      runId,
-      topic: title,
-      script:
-        finalScript,
-      description,
-      language,
-      voice:
-        production.voice,
-      visuals:
-        production.visuals,
-      visualVideo:
-        production.visualVideo,
-      finalVideo:
-        production.finalVideo,
-      captions:
-        production.c
+        error:
+          lastError
