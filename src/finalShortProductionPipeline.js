@@ -121,44 +121,27 @@ export async function produceFinalShort({
   }
 
   // --------------------------------------------------
-  // 4. FINAL AUDIO + VIDEO MERGE
-  // --------------------------------------------------
-
-  const finalVideo = await buildFinalShort({
-    videoFile: visualVideo.outputFile,
-    audioFile: voice.outputFile,
-    title: cleanTopic,
-    outputDir: finalDir
-  });
-
-  if (!finalVideo.success) {
-    return {
-      success: false,
-      status: "FINAL_RENDER_FAILED",
-      stage: "FINAL_RENDER",
-      voice,
-      visuals,
-      visualVideo,
-      finalVideo
-    };
-  }
-
-  // --------------------------------------------------
-  // 5. CAPTION GENERATION
+  // 4. CAPTION TIMELINE
   // --------------------------------------------------
 
   const estimatedDuration =
     Math.max(
       1,
-      Number(visualVideo.sceneCount || visuals.sceneCount || 1) *
+      Number(
+        visualVideo.sceneCount ||
+        visuals.sceneCount ||
+        1
+      ) *
         Number(durationPerScene || 5)
     );
 
-  const captionTimeline = createCaptionTimeline({
-    text: cleanScript,
-    durationSeconds: estimatedDuration,
-    maxWordsPerCaption: 7
-  });
+  const captionTimeline =
+    createCaptionTimeline({
+      text: cleanScript,
+      durationSeconds:
+        estimatedDuration,
+      maxWordsPerCaption: 7
+    });
 
   if (!captionTimeline.success) {
     return {
@@ -168,20 +151,20 @@ export async function produceFinalShort({
       voice,
       visuals,
       visualVideo,
-      finalVideo,
       captions: captionTimeline
     };
   }
 
   // --------------------------------------------------
-  // 6. SAVE SRT CAPTION FILE
+  // 5. SAVE SRT
   // --------------------------------------------------
 
-  const captionFile = await saveSRT(
-    captionTimeline.captions,
-    captionDir,
-    `${finalVideo.id || `caption_${Date.now()}`}.srt`
-  );
+  const captionFile =
+    await saveSRT(
+      captionTimeline.captions,
+      captionDir,
+      `caption_${Date.now()}.srt`
+    );
 
   if (!captionFile.success) {
     return {
@@ -191,9 +174,44 @@ export async function produceFinalShort({
       voice,
       visuals,
       visualVideo,
-      finalVideo,
       captions: captionTimeline,
       captionFile
+    };
+  }
+
+  // --------------------------------------------------
+  // 6. FINAL VIDEO + AUDIO + BURNED-IN CAPTIONS
+  // --------------------------------------------------
+
+  const finalVideo =
+    await buildFinalShort({
+      videoFile:
+        visualVideo.outputFile,
+
+      audioFile:
+        voice.outputFile,
+
+      captionFile:
+        captionFile.outputFile,
+
+      title:
+        cleanTopic,
+
+      outputDir:
+        finalDir
+    });
+
+  if (!finalVideo.success) {
+    return {
+      success: false,
+      status: "FINAL_RENDER_FAILED",
+      stage: "FINAL_RENDER",
+      voice,
+      visuals,
+      visualVideo,
+      captions: captionTimeline,
+      captionFile,
+      finalVideo
     };
   }
 
@@ -204,61 +222,106 @@ export async function produceFinalShort({
   return {
     success: true,
     status: "FINAL_SHORT_READY",
-    topic: cleanTopic,
+
+    topic:
+      cleanTopic,
 
     voice: {
-      outputFile: voice.outputFile,
-      provider: voice.provider
+      outputFile:
+        voice.outputFile,
+
+      provider:
+        voice.provider
     },
 
     visuals: {
-      sceneCount: visuals.sceneCount,
-      provider: visuals.provider
+      sceneCount:
+        visuals.sceneCount,
+
+      provider:
+        visuals.provider
     },
 
     visualVideo: {
-      outputFile: visualVideo.outputFile,
-      sceneCount: visualVideo.sceneCount
-    },
+      outputFile:
+        visualVideo.outputFile,
 
-    finalVideo: {
-      outputFile: finalVideo.outputFile,
-      sizeBytes: finalVideo.sizeBytes
+      sceneCount:
+        visualVideo.sceneCount
     },
 
     captions: {
-      status: "READY",
+      status: "BURNED_IN",
+
       format: "SRT",
-      outputFile: captionFile.outputFile,
-      sizeBytes: captionFile.sizeBytes,
-      segmentCount: captionTimeline.captions.length,
-      durationSeconds: captionTimeline.durationSeconds
+
+      outputFile:
+        captionFile.outputFile,
+
+      sizeBytes:
+        captionFile.sizeBytes,
+
+      segmentCount:
+        captionTimeline.captions.length,
+
+      durationSeconds:
+        captionTimeline.durationSeconds
     },
 
-    nextStage: "QUALITY_ASSURANCE",
+    finalVideo: {
+      outputFile:
+        finalVideo.outputFile,
 
-    createdAt: new Date().toISOString()
+      sizeBytes:
+        finalVideo.sizeBytes,
+
+      captionsBurnedIn:
+        finalVideo.captions?.burnedIntoVideo === true
+    },
+
+    nextStage:
+      "QUALITY_ASSURANCE",
+
+    createdAt:
+      new Date().toISOString()
   };
 }
 
 export function getFinalShortProductionStatus() {
   return {
     configured: true,
+
     status: "READY",
 
     stages: [
       "VOICE",
       "VISUALS",
       "VISUAL_VIDEO",
+      "CAPTIONS",
+      "SRT_SAVE",
       "FINAL_AUDIO_VIDEO_MERGE",
-      "CAPTIONS"
+      "CAPTION_BURN_IN",
+      "QUALITY_ASSURANCE"
     ],
 
-    outputFormat: "MP4",
-    captionFormat: "SRT",
-    resolution: "1080x1920",
+    outputFormat:
+      "MP4",
+
+    captionFormat:
+      "SRT",
+
+    captionMode:
+      "BURNED_IN",
+
+    resolution:
+      "1080x1920",
 
     message:
-      "Voice, visual assets, final MP4 and SRT captions can be generated for a YouTube Short."
+      "Voice, visual assets, SRT captions and burned-in final YouTube Short MP4 can be generated."
   };
 }
+
+export default {
+  produceFinalShort,
+  getFinalShortProductionStatus
+};
