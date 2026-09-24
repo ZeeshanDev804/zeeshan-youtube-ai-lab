@@ -1,6 +1,21 @@
+import fs from "fs";
+import dotenv from "dotenv";
+
 import {
   canPublishAfterQA
 } from "./shortQualityPipeline.js";
+
+dotenv.config();
+
+const VALID_PRIVACY = [
+  "private",
+  "unlisted",
+  "public"
+];
+
+const MAX_TITLE_LENGTH = 100;
+const MAX_DESCRIPTION_LENGTH = 5000;
+const MAX_TAGS = 30;
 
 function cleanText(value = "") {
   return String(value)
@@ -8,11 +23,111 @@ function cleanText(value = "") {
     .trim();
 }
 
-const VALID_PRIVACY = [
-  "private",
-  "unlisted",
-  "public"
-];
+function isNonEmptyString(value) {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0
+  );
+}
+
+function normalizeRisk(value = "LOW") {
+  const risk = cleanText(value).toUpperCase();
+
+  if (
+    ["LOW", "MEDIUM", "HIGH"].includes(risk)
+  ) {
+    return risk;
+  }
+
+  return "MEDIUM";
+}
+
+function isEmergencyStopActive() {
+  return (
+    cleanText(
+      process.env.EMERGENCY_STOP || "false"
+    ).toLowerCase() === "true"
+  );
+}
+
+function getSystemMode() {
+  return cleanText(
+    process.env.SYSTEM_MODE || "REVIEW"
+  ).toUpperCase();
+}
+
+function isCEOApprovalRequired() {
+  return (
+    cleanText(
+      process.env.CEO_APPROVAL_REQUIRED || "true"
+    ).toLowerCase() === "true"
+  );
+}
+
+function hasYouTubeCredentials() {
+  return Boolean(
+    isNonEmptyString(
+      process.env.YOUTUBE_CLIENT_ID
+    ) &&
+    isNonEmptyString(
+      process.env.YOUTUBE_CLIENT_SECRET
+    ) &&
+    isNonEmptyString(
+      process.env.YOUTUBE_REFRESH_TOKEN
+    )
+  );
+}
+
+function validateVideoFile(videoFile) {
+  if (!isNonEmptyString(videoFile)) {
+    return {
+      valid: false,
+      error:
+        "Final video file is required."
+    };
+  }
+
+  if (!fs.existsSync(videoFile)) {
+    return {
+      valid: false,
+      error:
+        "Final video file does not exist."
+    };
+  }
+
+  let stats;
+
+  try {
+    stats = fs.statSync(videoFile);
+  } catch (error) {
+    return {
+      valid: false,
+      error:
+        "Final video file could not be inspected."
+    };
+  }
+
+  if (!stats.isFile()) {
+    return {
+      valid: false,
+      error:
+        "Final video path is not a file."
+    };
+  }
+
+  if (stats.size <= 0) {
+    return {
+      valid: false,
+      error:
+        "Final video file is empty."
+    };
+  }
+
+  return {
+    valid: true,
+    sizeBytes: stats.size
+  };
+}
 
 function validateMetadata({
   title,
@@ -33,13 +148,19 @@ function validateMetadata({
     );
   }
 
-  if (cleanTitle.length > 100) {
+  if (
+    cleanTitle.length >
+    MAX_TITLE_LENGTH
+  ) {
     errors.push(
       "YouTube title must be 100 characters or less."
     );
   }
 
-  if (cleanDescription.length > 5000) {
+  if (
+    cleanDescription.length >
+    MAX_DESCRIPTION_LENGTH
+  ) {
     errors.push(
       "YouTube description is too long."
     );
@@ -56,7 +177,7 @@ function validateMetadata({
       ? tags
           .map(cleanText)
           .filter(Boolean)
-          .slice(0, 30)
+          .slice(0, MAX_TAGS)
       : [];
 
   return {
@@ -100,6 +221,208 @@ function validatePrivacy(
   };
 }
 
+function validateManifest(
+  manifest
+) {
+  if (
+    !manifest ||
+    typeof manifest !== "object"
+  ) {
+    return {
+      valid: false,
+      error:
+        "Production manifest is required."
+    };
+  }
+
+  if (
+    !isNonEmptyString(
+      manifest.id
+    )
+  ) {
+    return {
+      valid: false,
+      error:
+        "Production manifest ID is required."
+    };
+  }
+
+  return {
+    valid: true
+  };
+}
+
+function validateRisk({
+  riskLevel = "LOW",
+  safetyResult = null
+} = {}) {
+  const risk =
+    normalizeRisk(
+      safetyResult?.riskLevel ||
+      riskLevel
+    );
+
+  if (risk === "HIGH") {
+    return {
+      allowed: false,
+      riskLevel: risk,
+      reason:
+        "High-risk content cannot enter the YouTube upload stage."
+    };
+  }
+
+  return {
+    allowed: true,
+    riskLevel: risk
+  };
+}
+
+function validateDuplicateResult(
+  duplicateResult
+) {
+  if (!duplicateResult) {
+    return {
+      allowed: true,
+      status:
+        "NOT_PROVIDED"
+    };
+  }
+
+  const status =
+    cleanText(
+      duplicateResult.status ||
+      duplicateResult.result ||
+      ""
+    ).toUpperCase();
+
+  if (
+    status === "BLOCK" ||
+    status === "EXACT"
+  ) {
+    return {
+      allowed: false,
+      status,
+      reason:
+        "Duplicate content protection blocked this upload."
+    };
+  }
+
+  if (
+    status === "REVIEW" ||
+    status === "SIMILAR"
+  ) {
+    return {
+      allowed: false,
+      status,
+      reason:
+        "Duplicate content requires review before upload."
+    };
+  }
+
+  return {
+    allowed: true,
+    status:
+      status || "PASS"
+  };
+}
+
+function validateCopyrightResult(
+  copyrightResult
+) {
+  if (!copyrightResult) {
+    return {
+      allowed: true,
+      status:
+        "NOT_PROVIDED"
+    };
+  }
+
+  const status =
+    cleanText(
+      copyrightResult.status ||
+      copyrightResult.result ||
+      ""
+    ).toUpperCase();
+
+  if (
+    status === "BLOCK" ||
+    status === "HIGH"
+  ) {
+    return {
+      allowed: false,
+      status,
+      reason:
+        "Copyright protection blocked this upload."
+    };
+  }
+
+  if (
+    status === "REVIEW" ||
+    status === "MEDIUM"
+  ) {
+    return {
+      allowed: false,
+      status,
+      reason:
+        "Copyright review is required before upload."
+    };
+  }
+
+  return {
+    allowed: true,
+    status:
+      status || "PASS"
+  };
+}
+
+function validateCEOAuthorization({
+  ceoApproval = null,
+  systemMode
+} = {}) {
+  if (
+    systemMode === "STOP"
+  ) {
+    return {
+      allowed: false,
+      reason:
+        "System mode is STOP."
+    };
+  }
+
+  if (
+    isEmergencyStopActive()
+  ) {
+    return {
+      allowed: false,
+      reason:
+        "Emergency Stop is active."
+    };
+  }
+
+  if (
+    systemMode === "REVIEW" &&
+    isCEOApprovalRequired()
+  ) {
+    const approved =
+      ceoApproval === true ||
+      ceoApproval?.approved === true ||
+      ceoApproval?.status ===
+        "APPROVED";
+
+    if (!approved) {
+      return {
+        allowed: false,
+        reason:
+          "CEO approval is required before YouTube upload."
+      };
+    }
+  }
+
+  return {
+    allowed: true
+  };
+}
+
 export function createYouTubeUploadJob({
   manifest,
   qaResult,
@@ -108,25 +431,34 @@ export function createYouTubeUploadJob({
   description = "",
   tags = [],
   privacyStatus = "private",
-  categoryId = "22"
+  categoryId = "22",
+  riskLevel = "LOW",
+  safetyResult = null,
+  duplicateResult = null,
+  copyrightResult = null,
+  ceoApproval = null
 } = {}) {
   const errors = [];
 
-  if (
-    !manifest ||
-    typeof manifest !== "object"
-  ) {
+  const manifestCheck =
+    validateManifest(
+      manifest
+    );
+
+  if (!manifestCheck.valid) {
     errors.push(
-      "Production manifest is required."
+      manifestCheck.error
     );
   }
 
-  if (
-    typeof videoFile !== "string" ||
-    !videoFile.trim()
-  ) {
+  const videoCheck =
+    validateVideoFile(
+      videoFile
+    );
+
+  if (!videoCheck.valid) {
     errors.push(
-      "Final video file is required."
+      videoCheck.error
     );
   }
 
@@ -176,17 +508,82 @@ export function createYouTubeUploadJob({
     );
   }
 
+  const riskCheck =
+    validateRisk({
+      riskLevel,
+      safetyResult
+    });
+
+  if (!riskCheck.allowed) {
+    errors.push(
+      riskCheck.reason
+    );
+  }
+
+  const duplicateCheck =
+    validateDuplicateResult(
+      duplicateResult
+    );
+
+  if (!duplicateCheck.allowed) {
+    errors.push(
+      duplicateCheck.reason
+    );
+  }
+
+  const copyrightCheck =
+    validateCopyrightResult(
+      copyrightResult
+    );
+
+  if (!copyrightCheck.allowed) {
+    errors.push(
+      copyrightCheck.reason
+    );
+  }
+
+  const systemMode =
+    getSystemMode();
+
+  const ceoCheck =
+    validateCEOAuthorization({
+      ceoApproval,
+      systemMode
+    });
+
+  if (!ceoCheck.allowed) {
+    errors.push(
+      ceoCheck.reason
+    );
+  }
+
   if (errors.length > 0) {
     return {
       success: false,
-      status: "UPLOAD_BLOCKED",
-      errors
+      status:
+        "UPLOAD_BLOCKED",
+      errors,
+      checks: {
+        qaPassed:
+          qaAuthorization.allowed,
+        videoValid:
+          videoCheck.valid,
+        riskLevel:
+          riskCheck.riskLevel,
+        duplicateStatus:
+          duplicateCheck.status,
+        copyrightStatus:
+          copyrightCheck.status,
+        ceoAuthorized:
+          ceoCheck.allowed
+      }
     };
   }
 
   return {
     success: true,
-    status: "UPLOAD_READY",
+    status:
+      "UPLOAD_READY",
     productionId:
       manifest.id,
     videoFile,
@@ -204,8 +601,20 @@ export function createYouTubeUploadJob({
       privacy.privacyStatus,
     authorization: {
       qaPassed: true,
-      uploadAllowed: true
+      videoValidated: true,
+      uploadAllowed: true,
+      riskLevel:
+        riskCheck.riskLevel,
+      duplicateCheck:
+        duplicateCheck.status,
+      copyrightCheck:
+        copyrightCheck.status,
+      ceoApproved:
+        true,
+      systemMode
     },
+    youtubeCredentialsConfigured:
+      hasYouTubeCredentials(),
     nextStage:
       "YOUTUBE_OAUTH_UPLOAD",
     createdAt:
@@ -229,6 +638,26 @@ export function canUploadToYouTube(
     };
   }
 
+  if (
+    isEmergencyStopActive()
+  ) {
+    return {
+      allowed: false,
+      reason:
+        "Emergency Stop is active."
+    };
+  }
+
+  if (
+    getSystemMode() === "STOP"
+  ) {
+    return {
+      allowed: false,
+      reason:
+        "System mode is STOP."
+    };
+  }
+
   return {
     allowed: true,
     reason:
@@ -242,18 +671,29 @@ export function getYouTubeUploadGuardStatus() {
     status: "READY",
     checks: [
       "production manifest",
-      "final video",
+      "final video exists",
       "video QA",
       "title",
       "description",
       "tags",
       "privacy status",
-      "category ID"
+      "category ID",
+      "risk level",
+      "duplicate protection",
+      "copyright protection",
+      "CEO authorization",
+      "Emergency Stop"
     ],
     defaultPrivacy:
       "private",
     publishGate:
       "UPLOAD_READY_REQUIRED",
+    youtubeCredentials:
+      hasYouTubeCredentials(),
+    systemMode:
+      getSystemMode(),
+    emergencyStop:
+      isEmergencyStopActive(),
     message:
       "YouTube upload authorization gate is ready."
   };
