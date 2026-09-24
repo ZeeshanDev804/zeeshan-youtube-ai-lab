@@ -3,11 +3,26 @@ import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+
 const STATE_FILE =
   process.env.CEO_AUTOMATION_STATE_FILE ||
   "./storage/automation/ceo-control-state.json";
 
-const MAX_DAILY_VIDEOS = 5;
+
+/*
+|--------------------------------------------------------------------------
+| DAILY TARGET
+|--------------------------------------------------------------------------
+|
+| 5 = target only.
+| 5 = NOT a hard maximum.
+|
+| Strong + safe topics can continue beyond 5.
+|--------------------------------------------------------------------------
+*/
+
+const DAILY_TARGET_VIDEOS = 5;
+
 
 const MODES = Object.freeze({
   AUTO: "AUTO",
@@ -15,12 +30,12 @@ const MODES = Object.freeze({
   STOP: "STOP"
 });
 
+
 const STATUS = Object.freeze({
   READY: "READY",
   BLOCKED: "BLOCKED",
   APPROVAL_REQUIRED: "APPROVAL_REQUIRED",
-  EMERGENCY_STOP: "EMERGENCY_STOP",
-  DAILY_LIMIT_REACHED: "DAILY_LIMIT_REACHED"
+  EMERGENCY_STOP: "EMERGENCY_STOP"
 });
 
 
@@ -51,6 +66,7 @@ function cleanText(value = "") {
 
 
 async function ensureStorage() {
+
   await fs.mkdir(
     path.dirname(STATE_FILE),
     {
@@ -61,8 +77,10 @@ async function ensureStorage() {
 
 
 function defaultState() {
+
   return {
-    version: 2,
+
+    version: 3,
 
     mode:
       MODES.REVIEW,
@@ -80,6 +98,7 @@ function defaultState() {
       null,
 
     daily: {
+
       date:
         todayKey(),
 
@@ -88,6 +107,7 @@ function defaultState() {
 
       completed:
         0
+
     },
 
     approvals: {},
@@ -101,36 +121,48 @@ function defaultState() {
 
 
 async function readState() {
+
   await ensureStorage();
 
+
   try {
+
     const raw =
       await fs.readFile(
         STATE_FILE,
         "utf8"
       );
 
+
     const parsed =
       JSON.parse(raw);
 
+
     if (
       !parsed ||
-      typeof parsed !==
-        "object"
+      typeof parsed !== "object"
     ) {
+
       return defaultState();
     }
+
 
     const base =
       defaultState();
 
+
     const state = {
+
       ...base,
+
       ...parsed,
 
       daily: {
+
         ...base.daily,
+
         ...(parsed.daily || {})
+
       },
 
       approvals:
@@ -140,6 +172,7 @@ async function readState() {
       reservations:
         parsed.reservations ||
         {}
+
     };
 
 
@@ -151,7 +184,9 @@ async function readState() {
       state.daily.date !==
       todayKey()
     ) {
+
       state.daily = {
+
         date:
           todayKey(),
 
@@ -160,7 +195,9 @@ async function readState() {
 
         completed:
           0
+
       };
+
 
       state.reservations = {};
     }
@@ -168,14 +205,17 @@ async function readState() {
 
     return state;
 
+
   } catch (error) {
 
     if (
       error?.code ===
       "ENOENT"
     ) {
+
       return defaultState();
     }
+
 
     throw error;
   }
@@ -183,27 +223,40 @@ async function readState() {
 
 
 async function writeState(state) {
+
   await ensureStorage();
 
+
   const nextState = {
+
     ...state,
-    version: 2,
+
+    version: 3,
+
     updatedAt:
       now()
+
   };
+
 
   const tempFile =
     `${STATE_FILE}.tmp`;
 
+
   await fs.writeFile(
+
     tempFile,
+
     JSON.stringify(
       nextState,
       null,
       2
     ),
+
     "utf8"
+
   );
+
 
   await fs.rename(
     tempFile,
@@ -213,32 +266,44 @@ async function writeState(state) {
 
 
 function normalizeMode(mode) {
+
   const value =
     cleanText(mode)
       .toUpperCase();
+
 
   if (
     Object.values(MODES)
       .includes(value)
   ) {
+
     return value;
   }
+
 
   return null;
 }
 
 
 function normalizeRisk(risk) {
+
   const value =
-    cleanText(risk || "LOW")
-      .toUpperCase();
+    cleanText(
+      risk || "LOW"
+    ).toUpperCase();
+
 
   if (
-    ["LOW", "MEDIUM", "HIGH"]
-      .includes(value)
+    [
+      "LOW",
+      "MEDIUM",
+      "HIGH"
+    ].includes(value)
   ) {
+
     return value;
   }
+
 
   return "MEDIUM";
 }
@@ -253,11 +318,15 @@ function normalizeRisk(risk) {
 export async function setAutomationMode(
   mode
 ) {
+
   const normalized =
     normalizeMode(mode);
 
+
   if (!normalized) {
+
     return {
+
       success: false,
 
       status:
@@ -265,20 +334,26 @@ export async function setAutomationMode(
 
       allowedModes:
         Object.values(MODES)
+
     };
   }
+
 
   const state =
     await readState();
 
+
   state.mode =
     normalized;
+
 
   await writeState(
     state
   );
 
+
   return {
+
     success: true,
 
     status:
@@ -289,15 +364,19 @@ export async function setAutomationMode(
 
     emergencyStop:
       state.emergencyStop
+
   };
 }
 
 
 export async function getAutomationMode() {
+
   const state =
     await readState();
 
+
   return {
+
     success: true,
 
     mode:
@@ -305,6 +384,7 @@ export async function getAutomationMode() {
 
     emergencyStop:
       state.emergencyStop
+
   };
 }
 
@@ -316,27 +396,36 @@ export async function getAutomationMode() {
 */
 
 export async function activateEmergencyStop(
+
   reason =
     "CEO emergency stop"
+
 ) {
+
   const state =
     await readState();
 
+
   state.emergencyStop =
     true;
+
 
   state.emergencyStopReason =
     cleanText(reason) ||
     "CEO emergency stop";
 
+
   state.emergencyStopAt =
     now();
+
 
   await writeState(
     state
   );
 
+
   return {
+
     success: true,
 
     status:
@@ -350,28 +439,36 @@ export async function activateEmergencyStop(
 
     activatedAt:
       state.emergencyStopAt
+
   };
 }
 
 
 export async function clearEmergencyStop() {
+
   const state =
     await readState();
+
 
   state.emergencyStop =
     false;
 
+
   state.emergencyStopReason =
     null;
 
+
   state.emergencyStopClearedAt =
     now();
+
 
   await writeState(
     state
   );
 
+
   return {
+
     success: true,
 
     status:
@@ -379,6 +476,7 @@ export async function clearEmergencyStop() {
 
     emergencyStop:
       false
+
   };
 }
 
@@ -387,14 +485,27 @@ export async function clearEmergencyStop() {
 |--------------------------------------------------------------------------
 | AUTOMATION START GATE
 |--------------------------------------------------------------------------
+|
+| IMPORTANT:
+|
+| There is NO daily hard maximum here.
+|
+| The system can continue beyond 5.
+|
+| Quality/safety/originality decide whether
+| additional videos should actually be made.
+|--------------------------------------------------------------------------
 */
 
 export async function canStartAutomation({
+
   requestedVideos = 1
+
 } = {}) {
 
   const state =
     await readState();
+
 
   const amount =
     Math.max(
@@ -408,7 +519,9 @@ export async function canStartAutomation({
   if (
     state.emergencyStop
   ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -417,6 +530,7 @@ export async function canStartAutomation({
       reason:
         state.emergencyStopReason ||
         "Emergency STOP is active."
+
     };
   }
 
@@ -425,7 +539,9 @@ export async function canStartAutomation({
     state.mode ===
     MODES.STOP
   ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -433,6 +549,7 @@ export async function canStartAutomation({
 
       reason:
         "Automation mode is STOP."
+
     };
   }
 
@@ -444,39 +561,24 @@ export async function canStartAutomation({
     );
 
 
-  const remaining =
+  const remainingToTarget =
     Math.max(
       0,
-      MAX_DAILY_VIDEOS -
+      DAILY_TARGET_VIDEOS -
         started
     );
 
 
-  if (
-    amount >
-    remaining
-  ) {
-    return {
-      allowed: false,
-
-      status:
-        STATUS.DAILY_LIMIT_REACHED,
-
-      reason:
-        `Daily maximum of ${MAX_DAILY_VIDEOS} videos reached.`,
-
-      dailyLimit:
-        MAX_DAILY_VIDEOS,
-
-      startedToday:
-        started,
-
-      remaining
-    };
-  }
+  const overTarget =
+    Math.max(
+      0,
+      started -
+        DAILY_TARGET_VIDEOS
+    );
 
 
   return {
+
     allowed: true,
 
     status:
@@ -485,27 +587,65 @@ export async function canStartAutomation({
     mode:
       state.mode,
 
-    dailyLimit:
-      MAX_DAILY_VIDEOS,
+    requestedVideos:
+      amount,
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
+
+    hardDailyMaximum:
+      false,
+
+    maximumVideosPerDay:
+      null,
 
     startedToday:
       started,
 
-    remaining
+    remainingToTarget,
+
+    targetReached:
+      started >=
+      DAILY_TARGET_VIDEOS,
+
+    overTarget,
+
+    canContinueBeyondTarget:
+      true,
+
+    qualityOverQuantity:
+      true
+
   };
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| DAILY SLOT RESERVATION
+| DAILY/SCHEDULE SLOT RESERVATION
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+|
+| This reservation protects a schedule key
+| from duplicate execution.
+|
+| It does NOT limit the total number of
+| videos to 5 per day.
 |--------------------------------------------------------------------------
 */
 
 export async function reserveDailySlot({
-  reservationKey = null,
-  region = null,
-  runId = null
+
+  reservationKey =
+    null,
+
+  region =
+    null,
+
+  runId =
+    null
+
 } = {}) {
 
   const state =
@@ -515,7 +655,9 @@ export async function reserveDailySlot({
   if (
     state.emergencyStop
   ) {
+
     return {
+
       success: false,
 
       status:
@@ -524,6 +666,7 @@ export async function reserveDailySlot({
       reason:
         state.emergencyStopReason ||
         "Emergency STOP is active."
+
     };
   }
 
@@ -532,7 +675,9 @@ export async function reserveDailySlot({
     state.mode ===
     MODES.STOP
   ) {
+
     return {
+
       success: false,
 
       status:
@@ -540,14 +685,16 @@ export async function reserveDailySlot({
 
       reason:
         "Automation mode is STOP."
+
     };
   }
 
 
   /*
    * Idempotency:
-   * the same schedule reservation
-   * cannot consume another daily slot.
+   *
+   * Same schedule key cannot consume
+   * another reservation.
    */
 
   if (
@@ -562,7 +709,16 @@ export async function reserveDailySlot({
         reservationKey
       ];
 
+
+    const started =
+      Number(
+        state.daily.started ||
+        0
+      );
+
+
     return {
+
       success: true,
 
       status:
@@ -571,51 +727,38 @@ export async function reserveDailySlot({
       slot:
         existing.slot,
 
-      dailyLimit:
-        MAX_DAILY_VIDEOS,
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
 
-      remaining:
+      hardDailyMaximum:
+        false,
+
+      remainingToTarget:
         Math.max(
           0,
-          MAX_DAILY_VIDEOS -
-            Number(
-              state.daily.started ||
-              0
-            )
+          DAILY_TARGET_VIDEOS -
+            started
         ),
+
+      canContinueBeyondTarget:
+        true,
 
       reservation:
         existing
+
     };
   }
 
+
+  /*
+   * No daily maximum check here.
+   */
 
   const started =
     Number(
       state.daily.started ||
       0
     );
-
-
-  if (
-    started >=
-    MAX_DAILY_VIDEOS
-  ) {
-    return {
-      success: false,
-
-      status:
-        STATUS.DAILY_LIMIT_REACHED,
-
-      dailyLimit:
-        MAX_DAILY_VIDEOS,
-
-      startedToday:
-        started,
-
-      remaining: 0
-    };
-  }
 
 
   const nextSlot =
@@ -627,6 +770,7 @@ export async function reserveDailySlot({
 
 
   const reservation = {
+
     reservationId:
       createId(
         "reservation"
@@ -653,12 +797,14 @@ export async function reserveDailySlot({
 
     status:
       "RESERVED"
+
   };
 
 
   if (
     reservationKey
   ) {
+
     state.reservations[
       reservationKey
     ] =
@@ -672,6 +818,7 @@ export async function reserveDailySlot({
 
 
   return {
+
     success: true,
 
     status:
@@ -680,17 +827,38 @@ export async function reserveDailySlot({
     slot:
       nextSlot,
 
-    dailyLimit:
-      MAX_DAILY_VIDEOS,
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
 
-    remaining:
+    hardDailyMaximum:
+      false,
+
+    maximumVideosPerDay:
+      null,
+
+    remainingToTarget:
       Math.max(
         0,
-        MAX_DAILY_VIDEOS -
+        DAILY_TARGET_VIDEOS -
           nextSlot
       ),
 
+    targetReached:
+      nextSlot >=
+      DAILY_TARGET_VIDEOS,
+
+    overTarget:
+      Math.max(
+        0,
+        nextSlot -
+          DAILY_TARGET_VIDEOS
+      ),
+
+    canContinueBeyondTarget:
+      true,
+
     reservation
+
   };
 }
 
@@ -702,8 +870,10 @@ export async function reserveDailySlot({
 */
 
 export async function markVideoCompleted() {
+
   const state =
     await readState();
+
 
   state.daily.completed =
     Number(
@@ -711,11 +881,14 @@ export async function markVideoCompleted() {
       0
     ) + 1;
 
+
   await writeState(
     state
   );
 
+
   return {
+
     success: true,
 
     status:
@@ -723,6 +896,7 @@ export async function markVideoCompleted() {
 
     completedToday:
       state.daily.completed
+
   };
 }
 
@@ -734,12 +908,18 @@ export async function markVideoCompleted() {
 */
 
 export async function canPublish({
-  risk = "LOW",
-  requiresApproval = false
+
+  risk =
+    "LOW",
+
+  requiresApproval =
+    false
+
 } = {}) {
 
   const state =
     await readState();
+
 
   const normalizedRisk =
     normalizeRisk(risk);
@@ -748,7 +928,9 @@ export async function canPublish({
   if (
     state.emergencyStop
   ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -756,6 +938,7 @@ export async function canPublish({
 
       reason:
         "Emergency STOP is active."
+
     };
   }
 
@@ -764,7 +947,9 @@ export async function canPublish({
     state.mode ===
     MODES.STOP
   ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -772,6 +957,7 @@ export async function canPublish({
 
       reason:
         "Automation mode is STOP."
+
     };
   }
 
@@ -780,7 +966,9 @@ export async function canPublish({
     state.mode ===
     MODES.REVIEW
   ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -794,6 +982,7 @@ export async function canPublish({
 
       risk:
         normalizedRisk
+
     };
   }
 
@@ -804,7 +993,9 @@ export async function canPublish({
     normalizedRisk ===
       "HIGH"
   ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -818,6 +1009,7 @@ export async function canPublish({
 
       risk:
         normalizedRisk
+
     };
   }
 
@@ -825,7 +1017,9 @@ export async function canPublish({
   if (
     requiresApproval
   ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -833,11 +1027,13 @@ export async function canPublish({
 
       reason:
         "This job explicitly requires CEO approval."
+
     };
   }
 
 
   return {
+
     allowed: true,
 
     status:
@@ -848,6 +1044,7 @@ export async function canPublish({
 
     risk:
       normalizedRisk
+
   };
 }
 
@@ -859,14 +1056,23 @@ export async function canPublish({
 */
 
 export async function createApprovalRequest({
+
   runId,
-  reason = "",
-  risk = "MEDIUM",
-  metadata = {}
+
+  reason =
+    "",
+
+  risk =
+    "MEDIUM",
+
+  metadata =
+    {}
+
 } = {}) {
 
   const state =
     await readState();
+
 
   const approvalId =
     createId(
@@ -875,6 +1081,7 @@ export async function createApprovalRequest({
 
 
   const request = {
+
     approvalId,
 
     runId:
@@ -897,6 +1104,7 @@ export async function createApprovalRequest({
 
     metadata:
       metadata || {}
+
   };
 
 
@@ -912,24 +1120,32 @@ export async function createApprovalRequest({
 
 
   return {
+
     success: true,
 
     status:
       "APPROVAL_CREATED",
 
     request
+
   };
 }
 
 
 export async function decideApproval({
+
   approvalId,
+
   decision,
-  note = ""
+
+  note =
+    ""
+
 } = {}) {
 
   const state =
     await readState();
+
 
   const id =
     cleanText(
@@ -942,18 +1158,22 @@ export async function decideApproval({
 
 
   if (!request) {
+
     return {
+
       success: false,
 
       status:
         "APPROVAL_NOT_FOUND"
+
     };
   }
 
 
   const normalized =
-    cleanText(decision)
-      .toUpperCase();
+    cleanText(
+      decision
+    ).toUpperCase();
 
 
   if (
@@ -962,11 +1182,14 @@ export async function decideApproval({
       "REJECTED"
     ].includes(normalized)
   ) {
+
     return {
+
       success: false,
 
       status:
         "INVALID_DECISION"
+
     };
   }
 
@@ -974,8 +1197,10 @@ export async function decideApproval({
   request.status =
     normalized;
 
+
   request.note =
     cleanText(note);
+
 
   request.decidedAt =
     now();
@@ -991,12 +1216,14 @@ export async function decideApproval({
 
 
   return {
+
     success: true,
 
     status:
       "APPROVAL_UPDATED",
 
     request
+
   };
 }
 
@@ -1014,6 +1241,7 @@ export async function getApprovalRequest(
   const state =
     await readState();
 
+
   const id =
     cleanText(
       approvalId
@@ -1021,11 +1249,14 @@ export async function getApprovalRequest(
 
 
   if (!id) {
+
     return {
+
       success: false,
 
       status:
         "INVALID_APPROVAL_ID"
+
     };
   }
 
@@ -1035,22 +1266,27 @@ export async function getApprovalRequest(
 
 
   if (!request) {
+
     return {
+
       success: false,
 
       status:
         "APPROVAL_NOT_FOUND"
+
     };
   }
 
 
   return {
+
     success: true,
 
     status:
       "APPROVAL_FOUND",
 
     request
+
   };
 }
 
@@ -1087,7 +1323,24 @@ export async function getCEOAutomationStatus() {
     );
 
 
+  const remainingToTarget =
+    Math.max(
+      0,
+      DAILY_TARGET_VIDEOS -
+        started
+    );
+
+
+  const overTarget =
+    Math.max(
+      0,
+      started -
+        DAILY_TARGET_VIDEOS
+    );
+
+
   return {
+
     success: true,
 
     version:
@@ -1110,14 +1363,24 @@ export async function getCEOAutomationStatus() {
       null,
 
     daily: {
+
       date:
         state.daily.date,
 
-      limit:
-        MAX_DAILY_VIDEOS,
+      target:
+        DAILY_TARGET_VIDEOS,
+
+      dailyTargetVideos:
+        DAILY_TARGET_VIDEOS,
+
+      hardDailyMaximum:
+        false,
 
       maximum:
-        MAX_DAILY_VIDEOS,
+        null,
+
+      limit:
+        null,
 
       started,
 
@@ -1126,43 +1389,60 @@ export async function getCEOAutomationStatus() {
 
       completed,
 
-      remaining:
-        Math.max(
-          0,
-          MAX_DAILY_VIDEOS -
-            started
-        )
+      remainingToTarget,
+
+      targetReached:
+        started >=
+        DAILY_TARGET_VIDEOS,
+
+      overTarget,
+
+      canContinueBeyondTarget:
+        true
+
     },
 
     approvals: {
+
       total:
         approvals.length,
 
       pending:
         approvals.filter(
-          (item) =>
+          item =>
             item.status ===
             "PENDING"
         ).length,
 
       approved:
         approvals.filter(
-          (item) =>
+          item =>
             item.status ===
             "APPROVED"
         ).length,
 
       rejected:
         approvals.filter(
-          (item) =>
+          item =>
             item.status ===
             "REJECTED"
         ).length
+
     },
 
     safetyRules: {
+
+      dailyTargetVideos:
+        DAILY_TARGET_VIDEOS,
+
+      hardDailyMaximum:
+        false,
+
       maximumVideosPerDay:
-        MAX_DAILY_VIDEOS,
+        null,
+
+      canContinueBeyondTarget:
+        true,
 
       mediumRiskNeedsApproval:
         true,
@@ -1181,12 +1461,16 @@ export async function getCEOAutomationStatus() {
 
       duplicateReservationProtection:
         true
+
     },
 
     storage: {
+
       stateFile:
         STATE_FILE
+
     }
+
   };
 }
 
@@ -1204,6 +1488,7 @@ export async function resetDailyCounter() {
 
 
   state.daily = {
+
     date:
       todayKey(),
 
@@ -1212,6 +1497,7 @@ export async function resetDailyCounter() {
 
     completed:
       0
+
   };
 
 
@@ -1225,6 +1511,7 @@ export async function resetDailyCounter() {
 
 
   return {
+
     success: true,
 
     status:
@@ -1232,6 +1519,7 @@ export async function resetDailyCounter() {
 
     date:
       state.daily.date
+
   };
 }
 
@@ -1248,44 +1536,76 @@ export async function getCEOAutomationGuardStatus() {
     await getCEOAutomationStatus();
 
 
+  let guardStatus =
+    STATUS.READY;
+
+
+  if (
+    status.emergencyStop
+  ) {
+
+    guardStatus =
+      STATUS.EMERGENCY_STOP;
+
+  } else if (
+    status.mode ===
+    MODES.STOP
+  ) {
+
+    guardStatus =
+      STATUS.BLOCKED;
+
+  }
+
+
   return {
+
     ...status,
 
     configured:
       true,
 
     status:
-      status.emergencyStop
-        ? STATUS.EMERGENCY_STOP
-        : status.mode ===
-          MODES.STOP
-          ? STATUS.BLOCKED
-          : status.daily.remaining <= 0
-            ? STATUS.DAILY_LIMIT_REACHED
-            : STATUS.READY
+      guardStatus
+
   };
 }
 
 
+/*
+|--------------------------------------------------------------------------
+| DEFAULT EXPORT
+|--------------------------------------------------------------------------
+*/
+
 export default {
+
   setAutomationMode,
+
   getAutomationMode,
 
   activateEmergencyStop,
+
   clearEmergencyStop,
 
   canStartAutomation,
+
   reserveDailySlot,
+
   markVideoCompleted,
 
   canPublish,
 
   createApprovalRequest,
+
   decideApproval,
+
   getApprovalRequest,
 
   getCEOAutomationStatus,
+
   getCEOAutomationGuardStatus,
 
   resetDailyCounter
+
 };
