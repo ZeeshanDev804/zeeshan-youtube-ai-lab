@@ -2,252 +2,207 @@ import "dotenv/config";
 
 import {
   evaluateSchedule,
-  reserveScheduledRun,
-  getSchedulerStatus
+  reserveScheduledRun
 } from "./worldwideScheduler.js";
 
 import {
-  runAutomationCycle,
-  getAutomationStatus
-} from "./automationOrchestrator.js";
-
-import {
+  canStartAutomation,
+  activateEmergencyStop,
   getCEOAutomationStatus
 } from "./ceoAutomationGuard.js";
 
 import {
-  getYouTubeOAuthStatus
-} from "./youtubeOAuthUploader.js";
+  runAutomationCycle
+} from "./automationOrchestrator.js";
 
 import {
-  createReliabilityJob,
-  updateReliabilityJob,
+  startReliabilityJob,
   completeReliabilityJob,
-  failReliabilityJob,
-  acquireJobLock,
-  releaseJobLock
+  failReliabilityJob
 } from "./automationReliability.js";
 
 
+const DAILY_TARGET_VIDEOS = 5;
+
+const REGIONS = [
+  "USA",
+  "UK",
+  "EUROPE"
+];
+
+
+function cleanText(value = "") {
+  return String(value)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
 function createRunId(region) {
-  return `scheduled_${String(region).toLowerCase()}_${Date.now()}`;
+  return `scheduled-${cleanText(region).toLowerCase()}-${Date.now()}`;
 }
 
 
-function normalizeRegion(region = "USA") {
-  return String(region)
-    .trim()
-    .toUpperCase();
-}
+/*
+|--------------------------------------------------------------------------
+| CEO SAFETY CHECK
+|--------------------------------------------------------------------------
+*/
 
+async function checkCEOState() {
 
-function isCEOBlocked(ceo) {
-  return Boolean(
-    ceo?.emergencyStop ||
-    ceo?.mode === "STOP"
-  );
-}
-
-
-function createScheduleLockKey(region, date) {
-  const normalizedRegion =
-    normalizeRegion(region);
-
-  const scheduleDate =
-    date instanceof Date
-      ? date
-      : new Date(date);
-
-  const year =
-    scheduleDate.getFullYear();
-
-  const month =
-    String(
-      scheduleDate.getMonth() + 1
-    ).padStart(2, "0");
-
-  const day =
-    String(
-      scheduleDate.getDate()
-    ).padStart(2, "0");
-
-  const hour =
-    String(
-      scheduleDate.getHours()
-    ).padStart(2, "0");
-
-  return `scheduled:${normalizedRegion}:${year}-${month}-${day}:${hour}`;
-}
-
-
-export async function runScheduledAutomation({
-  region = "USA",
-  date = new Date(),
-  execute = false
-} = {}) {
-
-  const normalizedRegion =
-    normalizeRegion(region);
-
-
-  /*
-   * -------------------------------------------------------
-   * CEO SAFETY CHECK
-   * -------------------------------------------------------
-   */
-
-  const ceo =
+  const status =
     await getCEOAutomationStatus();
 
 
-  if (ceo?.emergencyStop) {
+  if (
+    status.emergencyStop
+  ) {
     return {
-      success: false,
-      status: "EMERGENCY_STOP",
-      mode:
-        execute
-          ? "EXECUTE"
-          : "DRY_RUN",
-      region:
-        normalizedRegion,
-      message:
-        "Emergency STOP is active. Scheduled automation was blocked."
+      allowed: false,
+
+      status:
+        "EMERGENCY_STOP",
+
+      reason:
+        status.emergencyStopReason ||
+        "CEO emergency stop is active."
     };
   }
 
 
-  if (ceo?.mode === "STOP") {
+  if (
+    status.mode ===
+    "STOP"
+  ) {
     return {
-      success: false,
-      status: "AUTOMATION_STOPPED",
-      mode:
-        execute
-          ? "EXECUTE"
-          : "DRY_RUN",
-      region:
-        normalizedRegion,
-      message:
+      allowed: false,
+
+      status:
+        "CEO_STOP",
+
+      reason:
         "CEO automation mode is STOP."
     };
   }
 
 
+  return {
+    allowed: true,
+
+    status:
+      "CEO_READY",
+
+    mode:
+      status.mode
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| RUN ONE SCHEDULED REGION
+|--------------------------------------------------------------------------
+*/
+
+export async function runScheduledRegion({
+  region,
+  requestedVideos = 1,
+  date = new Date()
+} = {}) {
+
+  const normalizedRegion =
+    cleanText(region)
+      .toUpperCase();
+
+
+  if (
+    !REGIONS.includes(
+      normalizedRegion
+    )
+  ) {
+    return {
+      success: false,
+
+      status:
+        "INVALID_REGION",
+
+      region:
+        normalizedRegion
+    };
+  }
+
+
   /*
-   * -------------------------------------------------------
-   * WORLDWIDE SCHEDULE CHECK
-   * -------------------------------------------------------
+   * First CEO safety check.
+   */
+
+  const ceo =
+    await checkCEOState();
+
+
+  if (!ceo.allowed) {
+    return {
+      success: false,
+
+      status:
+        ceo.status,
+
+      reason:
+        ceo.reason,
+
+      region:
+        normalizedRegion
+    };
+  }
+
+
+  /*
+   * Check scheduler window.
    */
 
   const evaluation =
     await evaluateSchedule({
       region:
         normalizedRegion,
+
+      requestedVideos,
+
       date
     });
-
-
-  if (!evaluation?.eligible) {
-    return {
-      success: false,
-      status:
-        evaluation?.status ||
-        "SCHEDULE_NOT_ELIGIBLE",
-      mode:
-        execute
-          ? "EXECUTE"
-          : "DRY_RUN",
-      region:
-        normalizedRegion,
-      evaluation
-    };
-  }
-
-
-  /*
-   * -------------------------------------------------------
-   * DRY RUN
-   * -------------------------------------------------------
-   */
-
-  if (!execute) {
-    return {
-      success: true,
-      status: "SCHEDULE_READY",
-      mode: "DRY_RUN",
-      region:
-        normalizedRegion,
-      timezone:
-        evaluation.timezone,
-      evaluation,
-      message:
-        "Schedule is eligible. No automation cycle was started."
-    };
-  }
-
-
-  /*
-   * -------------------------------------------------------
-   * SECOND CEO SAFETY CHECK
-   * -------------------------------------------------------
-   */
-
-  const ceoBeforeReservation =
-    await getCEOAutomationStatus();
 
 
   if (
-    isCEOBlocked(
-      ceoBeforeReservation
-    )
+    !evaluation.allowed
   ) {
     return {
       success: false,
+
       status:
-        ceoBeforeReservation.emergencyStop
-          ? "EMERGENCY_STOP"
-          : "AUTOMATION_STOPPED",
-      mode: "EXECUTE",
+        evaluation.status,
+
+      reason:
+        evaluation.reason ||
+        null,
+
       region:
         normalizedRegion,
-      message:
-        "CEO safety state changed before scheduled execution."
+
+      scheduleSlotId:
+        evaluation.scheduleSlotId ||
+        null
     };
   }
 
 
   /*
-   * -------------------------------------------------------
-   * DUPLICATE SCHEDULE LOCK
-   * -------------------------------------------------------
+   * IMPORTANT:
+   *
+   * This is NOT a daily 5-video limit.
+   *
+   * The reservation protects only
+   * this exact schedule slot.
    */
-
-  const lockKey =
-    createScheduleLockKey(
-      normalizedRegion,
-      date
-    );
-
-
-  const lock =
-    await acquireJobLock({
-      lockKey
-    });
-
-
-  if (!lock?.success) {
-    return {
-      success: false,
-      status:
-        lock?.status ||
-        "SCHEDULE_ALREADY_RUNNING",
-      mode: "EXECUTE",
-      region:
-        normalizedRegion,
-      lockKey,
-      lock
-    };
-  }
-
 
   const runId =
     createRunId(
@@ -255,224 +210,282 @@ export async function runScheduledAutomation({
     );
 
 
-  /*
-   * -------------------------------------------------------
-   * RELIABILITY JOB
-   * -------------------------------------------------------
-   */
-
-  const reliabilityJob =
-    await createReliabilityJob({
-      runId,
-      topic:
-        normalizedRegion,
-      stage:
-        "SCHEDULE_RESERVED"
-    });
-
-
-  if (!reliabilityJob?.success) {
-    await releaseJobLock({
-      lockKey
-    });
-
-    return {
-      success: false,
-      status:
-        "RELIABILITY_JOB_FAILED",
-      mode: "EXECUTE",
+  const reservation =
+    await reserveScheduledRun({
       region:
         normalizedRegion,
+
       runId,
-      reliabilityJob
+
+      date
+    });
+
+
+  if (
+    !reservation.success
+  ) {
+    return {
+      success: false,
+
+      status:
+        reservation.status,
+
+      reason:
+        reservation.reason ||
+        null,
+
+      region:
+        normalizedRegion,
+
+      scheduleSlotId:
+        reservation.scheduleSlotId ||
+        evaluation.scheduleSlotId
     };
   }
 
 
+  /*
+   * Same schedule slot already executed.
+   */
+
+  if (
+    reservation.status ===
+    "ALREADY_RESERVED"
+  ) {
+    return {
+      success: true,
+
+      status:
+        "SLOT_ALREADY_RESERVED",
+
+      region:
+        normalizedRegion,
+
+      scheduleSlotId:
+        reservation.scheduleSlotId,
+
+      reservationKey:
+        reservation.reservationKey,
+
+      skipped:
+        true,
+
+      reason:
+        "This schedule slot was already reserved."
+    };
+  }
+
+
+  /*
+   * Start reliability tracking.
+   */
+
+  let reliabilityJob = null;
+
+
   try {
 
-    await updateReliabilityJob({
-      runId,
-      status:
-        "RUNNING",
-      stage:
-        "SCHEDULE_RESERVATION"
-    });
+    reliabilityJob =
+      await startReliabilityJob({
+        jobType:
+          "scheduled-automation",
 
-
-    /*
-     * -----------------------------------------------------
-     * RESERVE DAILY SLOT
-     * -----------------------------------------------------
-     */
-
-    const reservation =
-      await reserveScheduledRun({
-        region:
-          normalizedRegion,
-        date
-      });
-
-
-    if (!reservation?.eligible) {
-
-      await updateReliabilityJob({
         runId,
-        status:
-          "BLOCKED",
-        stage:
-          "SCHEDULE_RESERVATION",
+
         metadata: {
-          reservationStatus:
-            reservation?.status ||
-            "BLOCKED"
+          region:
+            normalizedRegion,
+
+          scheduleSlotId:
+            evaluation.scheduleSlotId,
+
+          reservationKey:
+            evaluation.reservationKey,
+
+          dailyTarget:
+            DAILY_TARGET_VIDEOS
         }
       });
 
 
+    /*
+     * Final CEO check immediately
+     * before running the automation.
+     */
+
+    const finalCEOCheck =
+      await checkCEOState();
+
+
+    if (
+      !finalCEOCheck.allowed
+    ) {
+
+      if (reliabilityJob) {
+        await failReliabilityJob({
+          jobId:
+            reliabilityJob.jobId,
+
+          error:
+            finalCEOCheck.reason ||
+            finalCEOCheck.status
+        });
+      }
+
+
       return {
         success: false,
+
         status:
-          reservation?.status ||
-          "SCHEDULE_RESERVATION_BLOCKED",
-        mode: "EXECUTE",
+          finalCEOCheck.status,
+
+        reason:
+          finalCEOCheck.reason,
+
         region:
           normalizedRegion,
-        runId,
-        reservation
+
+        runId
       };
     }
 
 
     /*
-     * -----------------------------------------------------
-     * AUTOMATION PIPELINE
-     * -----------------------------------------------------
+     * Check automation start gate.
+     *
+     * There is NO hard daily maximum.
      */
 
-    await updateReliabilityJob({
-      runId,
-      status:
-        "RUNNING",
-      stage:
-        "AUTOMATION_CYCLE"
-    });
+    const startCheck =
+      await canStartAutomation({
+        requestedVideos
+      });
 
+
+    if (
+      !startCheck.allowed
+    ) {
+
+      if (reliabilityJob) {
+        await failReliabilityJob({
+          jobId:
+            reliabilityJob.jobId,
+
+          error:
+            startCheck.reason ||
+            startCheck.status
+        });
+      }
+
+
+      return {
+        success: false,
+
+        status:
+          startCheck.status,
+
+        reason:
+          startCheck.reason,
+
+        region:
+          normalizedRegion,
+
+        runId
+      };
+    }
+
+
+    /*
+     * Run the actual automation cycle.
+     *
+     * The orchestrator itself decides
+     * whether a topic is safe/good enough.
+     */
 
     const result =
       await runAutomationCycle({
+        region:
+          normalizedRegion,
+
         runId
       });
 
 
     /*
-     * -----------------------------------------------------
-     * AUTOMATION RESULT
-     * -----------------------------------------------------
+     * Complete reliability tracking.
      */
 
-    if (result?.success === true) {
+    if (reliabilityJob) {
 
       await completeReliabilityJob({
-        runId,
-        metadata: {
-          region:
-            normalizedRegion,
-          timezone:
-            evaluation.timezone,
-          reservationStatus:
-            reservation?.status ||
-            null,
-          automationStatus:
-            result?.status ||
-            "COMPLETED"
-        }
-      });
+        jobId:
+          reliabilityJob.jobId,
 
-    } else {
-
-      await updateReliabilityJob({
-        runId,
-        status:
-          "BLOCKED",
-        stage:
-          "AUTOMATION_CYCLE",
-        metadata: {
-          region:
-            normalizedRegion,
-          automationStatus:
-            result?.status ||
-            "AUTOMATION_BLOCKED"
-        }
+        result
       });
     }
 
 
     return {
-      success:
-        Boolean(
-          result?.success
-        ),
+      success: true,
 
       status:
-        result?.status ||
-        "AUTOMATION_COMPLETED",
-
-      mode: "EXECUTE",
+        "SCHEDULED_AUTOMATION_COMPLETED",
 
       region:
         normalizedRegion,
 
-      timezone:
-        evaluation.timezone,
-
       runId,
 
-      reservation,
+      scheduleSlotId:
+        evaluation.scheduleSlotId,
 
-      reliability:
-        {
-          status:
-            result?.success === true
-              ? "COMPLETED"
-              : "BLOCKED"
-        },
+      reservationKey:
+        evaluation.reservationKey,
+
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+
+      /*
+       * Target is informational only.
+       */
+
+      targetIsHardMaximum:
+        false,
+
+      canContinueBeyondTarget:
+        true,
 
       result
     };
 
+
   } catch (error) {
 
-    const normalizedError = {
-      name:
-        error?.name ||
-        "Error",
+    if (reliabilityJob) {
 
-      message:
-        error?.message ||
-        String(error),
+      try {
 
-      code:
-        error?.code ||
-        null
-    };
+        await failReliabilityJob({
+          jobId:
+            reliabilityJob.jobId,
 
+          error:
+            error?.message ||
+            String(error)
+        });
 
-    await failReliabilityJob({
-      runId,
-      error,
-      stage:
-        "AUTOMATION_CYCLE"
-    });
+      } catch {
+        // Do not hide the original error.
+      }
+    }
 
 
     return {
       success: false,
 
       status:
-        "AUTOMATION_CYCLE_FAILED",
-
-      mode: "EXECUTE",
+        "SCHEDULED_AUTOMATION_FAILED",
 
       region:
         normalizedRegion,
@@ -480,156 +493,241 @@ export async function runScheduledAutomation({
       runId,
 
       error:
-        normalizedError
+        error?.message ||
+        String(error)
     };
-
-  } finally {
-
-    /*
-     * Always release the schedule lock
-     * after this workflow finishes.
-     */
-
-    await releaseJobLock({
-      lockKey
-    });
   }
 }
 
 
-export async function previewScheduledAutomation({
-  region = "USA",
+/*
+|--------------------------------------------------------------------------
+| RUN ALL REGIONS
+|--------------------------------------------------------------------------
+*/
+
+export async function runScheduledAutomation({
+  requestedVideos = 1,
   date = new Date()
 } = {}) {
 
-  return runScheduledAutomation({
-    region,
-    date,
-    execute: false
-  });
-}
+  const results = [];
 
 
-export async function executeScheduledAutomation({
-  region = "USA",
-  date = new Date()
-} = {}) {
+  for (
+    const region of REGIONS
+  ) {
 
-  return runScheduledAutomation({
-    region,
-    date,
-    execute: true
-  });
-}
+    const result =
+      await runScheduledRegion({
+        region,
 
+        requestedVideos,
 
-export async function getScheduledAutomationStatus() {
-
-  const [
-    scheduler,
-    ceo,
-    orchestrator,
-    youtube
-  ] = await Promise.all([
-    getSchedulerStatus(),
-    getCEOAutomationStatus(),
-    getAutomationStatus(),
-    getYouTubeOAuthStatus()
-  ]);
+        date
+      });
 
 
-  const ceoBlocked =
-    Boolean(
-      ceo?.emergencyStop ||
-      ceo?.mode === "STOP"
+    results.push(
+      result
     );
+  }
+
+
+  return {
+    success:
+      results.some(
+        (item) =>
+          item.success
+      ),
+
+    status:
+      "SCHEDULED_AUTOMATION_COMPLETE",
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
+
+    targetIsHardMaximum:
+      false,
+
+    canContinueBeyondTarget:
+      true,
+
+    results
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| PREVIEW
+|--------------------------------------------------------------------------
+|
+| Preview does not generate/publish content.
+|--------------------------------------------------------------------------
+*/
+
+export async function previewScheduledAutomation({
+  date = new Date()
+} = {}) {
+
+  const previews = [];
+
+
+  for (
+    const region of REGIONS
+  ) {
+
+    const evaluation =
+      await evaluateSchedule({
+        region,
+
+        date
+      });
+
+
+    previews.push({
+      region,
+
+      allowed:
+        evaluation.allowed,
+
+      status:
+        evaluation.status,
+
+      reason:
+        evaluation.reason ||
+        null,
+
+      scheduleSlotId:
+        evaluation.scheduleSlotId ||
+        null,
+
+      reservationKey:
+        evaluation.reservationKey ||
+        null,
+
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+
+      targetIsHardMaximum:
+        false,
+
+      canContinueBeyondTarget:
+        true
+    });
+  }
 
 
   return {
     success: true,
 
-    scheduler,
+    status:
+      "SCHEDULE_PREVIEW",
 
-    ceo,
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
 
-    orchestrator,
+    targetIsHardMaximum:
+      false,
 
-    youtube,
+    previews
+  };
+}
 
-    pipeline: {
 
-      scheduler:
-        scheduler
-          ? "READY"
-          : "UNKNOWN",
+/*
+|--------------------------------------------------------------------------
+| EMERGENCY STOP HELPER
+|--------------------------------------------------------------------------
+*/
 
-      ceoGuard:
-        ceo?.emergencyStop
-          ? "EMERGENCY_STOP"
-          : ceo?.mode === "STOP"
-            ? "STOPPED"
-            : "READY",
+export async function emergencyStopAutomation(
+  reason =
+    "Emergency stop requested by CEO."
+) {
 
-      orchestrator:
-        orchestrator
-          ? "READY"
-          : "UNKNOWN",
+  return activateEmergencyStop(
+    reason
+  );
+}
 
-      youtubeUpload:
-        youtube?.configured
-          ? "CONNECTED"
-          : "NOT_CONFIGURED"
-    },
 
-    production: {
+/*
+|--------------------------------------------------------------------------
+| STATUS
+|--------------------------------------------------------------------------
+*/
 
-      dailyLimit:
-        ceo?.daily?.limit ??
-        5,
+export async function getScheduledRunnerStatus() {
 
-      dailyUsed:
-        ceo?.daily?.used ??
-        0,
+  const ceo =
+    await getCEOAutomationStatus();
 
-      dailyRemaining:
-        ceo?.daily?.remaining ??
-        0,
 
-      blocked:
-        ceoBlocked
+  return {
+    success: true,
+
+    runner:
+      "SCHEDULED_AUTOMATION",
+
+    regions:
+      REGIONS,
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
+
+    targetIsHardMaximum:
+      false,
+
+    canContinueBeyondTarget:
+      true,
+
+    qualityOverQuantity:
+      true,
+
+    ceo: {
+      mode:
+        ceo.mode,
+
+      emergencyStop:
+        ceo.emergencyStop,
+
+      dailyStarted:
+        ceo.daily?.started || 0,
+
+      dailyCompleted:
+        ceo.daily?.completed || 0,
+
+      targetReached:
+        Boolean(
+          ceo.daily?.targetReached
+        ),
+
+      overTarget:
+        Number(
+          ceo.daily?.overTarget || 0
+        )
     }
   };
 }
 
 
-export async function emergencySafeStatus() {
-
-  const status =
-    await getScheduledAutomationStatus();
-
-
-  const remaining =
-    Number(
-      status?.production?.dailyRemaining ||
-      0
-    );
-
-
-  return {
-    ...status,
-
-    safeToStart:
-      !status?.ceo?.emergencyStop &&
-      status?.ceo?.mode !== "STOP" &&
-      remaining > 0
-  };
-}
-
+/*
+|--------------------------------------------------------------------------
+| DEFAULT EXPORT
+|--------------------------------------------------------------------------
+*/
 
 export default {
+
+  runScheduledRegion,
+
   runScheduledAutomation,
+
   previewScheduledAutomation,
-  executeScheduledAutomation,
-  getScheduledAutomationStatus,
-  emergencySafeStatus
+
+  emergencyStopAutomation,
+
+  getScheduledRunnerStatus
 };
