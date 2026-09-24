@@ -1,52 +1,31 @@
 import "dotenv/config";
 
-import fs from "node:fs/promises";
-import path from "node:path";
+import {
+  canStartAutomation,
+  reserveDailySlot,
+  getCEOAutomationStatus
+} from "./ceoAutomationGuard.js";
 
-const STATE_FILE =
-  process.env.CEO_AUTOMATION_STATE_FILE ||
-  "./storage/automation/ceo-control-state.json";
-
-/*
- * 5 is a DAILY TARGET, not a hard maximum.
- *
- * The system may produce fewer or more videos
- * depending on the number of genuinely good,
- * safe and eligible topics available.
- */
 const DAILY_TARGET_VIDEOS = 5;
 
-const MODES = Object.freeze({
-  AUTO: "AUTO",
-  REVIEW: "REVIEW",
-  STOP: "STOP"
+const SCHEDULE_WINDOW_MINUTES = 15;
+
+const REGIONS = Object.freeze({
+  USA: {
+    timezone: "America/New_York",
+    hours: [9, 13, 18]
+  },
+
+  UK: {
+    timezone: "Europe/London",
+    hours: [9, 13, 18]
+  },
+
+  EUROPE: {
+    timezone: "Europe/Paris",
+    hours: [9, 13, 18]
+  }
 });
-
-const STATUS = Object.freeze({
-  READY: "READY",
-  BLOCKED: "BLOCKED",
-  APPROVAL_REQUIRED: "APPROVAL_REQUIRED",
-  EMERGENCY_STOP: "EMERGENCY_STOP"
-});
-
-
-function now() {
-  return new Date().toISOString();
-}
-
-
-function todayKey() {
-  return new Date()
-    .toISOString()
-    .slice(0, 10);
-}
-
-
-function createId(prefix = "id") {
-  return `${prefix}_${Date.now()}_${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
-}
 
 
 function cleanText(value = "") {
@@ -56,1205 +35,469 @@ function cleanText(value = "") {
 }
 
 
-async function ensureStorage() {
-  await fs.mkdir(
-    path.dirname(STATE_FILE),
+function getLocalParts(timezone, date = new Date()) {
+  const parts = new Intl.DateTimeFormat(
+    "en-GB",
     {
-      recursive: true
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
     }
-  );
-}
+  ).formatToParts(date);
 
+  const result = {};
 
-function defaultState() {
+  for (const part of parts) {
+    if (part.type !== "literal") {
+      result[part.type] = part.value;
+    }
+  }
+
   return {
-    version: 3,
-
-    mode:
-      MODES.REVIEW,
-
-    emergencyStop:
-      false,
-
-    emergencyStopReason:
-      null,
-
-    emergencyStopAt:
-      null,
-
-    emergencyStopClearedAt:
-      null,
-
-    daily: {
-      date:
-        todayKey(),
-
-      target:
-        DAILY_TARGET_VIDEOS,
-
-      started:
-        0,
-
-      completed:
-        0
-    },
-
-    approvals: {},
-
-    reservations: {},
-
-    updatedAt:
-      now()
+    year: Number(result.year),
+    month: Number(result.month),
+    day: Number(result.day),
+    hour: Number(result.hour),
+    minute: Number(result.minute),
+    second: Number(result.second)
   };
 }
 
 
-async function readState() {
-  await ensureStorage();
-
-  try {
-    const raw =
-      await fs.readFile(
-        STATE_FILE,
-        "utf8"
-      );
-
-    const parsed =
-      JSON.parse(raw);
-
-    if (
-      !parsed ||
-      typeof parsed !== "object"
-    ) {
-      return defaultState();
-    }
-
-    const base =
-      defaultState();
-
-    const state = {
-      ...base,
-      ...parsed,
-
-      daily: {
-        ...base.daily,
-        ...(parsed.daily || {})
-      },
-
-      approvals:
-        parsed.approvals || {},
-
-      reservations:
-        parsed.reservations || {}
-    };
-
-
-    /*
-     * New day:
-     * reset counters and reservations.
-     */
-
-    if (
-      state.daily.date !==
-      todayKey()
-    ) {
-      state.daily = {
-        date:
-          todayKey(),
-
-        target:
-          DAILY_TARGET_VIDEOS,
-
-        started:
-          0,
-
-        completed:
-          0
-      };
-
-      state.reservations = {};
-    }
-
-
-    /*
-     * Always keep the target
-     * synchronized with configuration.
-     */
-
-    state.daily.target =
-      DAILY_TARGET_VIDEOS;
-
-
-    return state;
-
-  } catch (error) {
-
-    if (
-      error?.code === "ENOENT"
-    ) {
-      return defaultState();
-    }
-
-    throw error;
-  }
-}
-
-
-async function writeState(state) {
-  await ensureStorage();
-
-  const nextState = {
-    ...state,
-
-    version: 3,
-
-    updatedAt:
-      now()
-  };
-
-  const tempFile =
-    `${STATE_FILE}.tmp`;
-
-  await fs.writeFile(
-    tempFile,
-    JSON.stringify(
-      nextState,
-      null,
-      2
-    ),
-    "utf8"
-  );
-
-  await fs.rename(
-    tempFile,
-    STATE_FILE
-  );
-}
-
-
-function normalizeMode(mode) {
-  const value =
-    cleanText(mode)
-      .toUpperCase();
-
-  if (
-    Object.values(MODES)
-      .includes(value)
-  ) {
-    return value;
-  }
-
-  return null;
-}
-
-
-function normalizeRisk(risk) {
-  const value =
-    cleanText(
-      risk || "LOW"
-    ).toUpperCase();
-
-  if (
-    [
-      "LOW",
-      "MEDIUM",
-      "HIGH"
-    ].includes(value)
-  ) {
-    return value;
-  }
-
-  return "MEDIUM";
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| MODE CONTROL
-|--------------------------------------------------------------------------
-*/
-
-export async function setAutomationMode(
-  mode
+function getCurrentScheduleSlot(
+  region,
+  date = new Date()
 ) {
-  const normalized =
-    normalizeMode(mode);
+  const config = REGIONS[region];
 
-  if (!normalized) {
-    return {
-      success: false,
-
-      status:
-        "INVALID_MODE",
-
-      allowedModes:
-        Object.values(MODES)
-    };
+  if (!config) {
+    return null;
   }
 
-  const state =
-    await readState();
-
-  state.mode =
-    normalized;
-
-  await writeState(
-    state
+  const local = getLocalParts(
+    config.timezone,
+    date
   );
 
+  let selectedHour = null;
+  let selectedMinute = null;
+
+  for (const hour of config.hours) {
+    const difference =
+      (local.hour - hour) * 60 +
+      local.minute;
+
+    if (
+      difference >= 0 &&
+      difference < SCHEDULE_WINDOW_MINUTES
+    ) {
+      selectedHour = hour;
+      selectedMinute = local.minute;
+
+      break;
+    }
+  }
+
+  if (selectedHour === null) {
+    return null;
+  }
+
   return {
-    success: true,
+    region,
 
-    status:
-      "MODE_UPDATED",
+    timezone:
+      config.timezone,
 
-    mode:
-      state.mode,
+    localDate:
+      `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`,
 
-    emergencyStop:
-      state.emergencyStop
-  };
-}
+    scheduledHour:
+      selectedHour,
 
+    currentMinute:
+      selectedMinute,
 
-export async function getAutomationMode() {
-  const state =
-    await readState();
+    scheduleSlotId:
+      `${region}-${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}-${String(selectedHour).padStart(2, "0")}`,
 
-  return {
-    success: true,
-
-    mode:
-      state.mode,
-
-    emergencyStop:
-      state.emergencyStop
+    reservationKey:
+      `schedule:${region}:${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}-${String(selectedHour).padStart(2, "0")}`
   };
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| EMERGENCY STOP
-|--------------------------------------------------------------------------
-*/
-
-export async function activateEmergencyStop(
-  reason =
-    "CEO emergency stop"
-) {
-  const state =
-    await readState();
-
-  state.emergencyStop =
-    true;
-
-  state.emergencyStopReason =
-    cleanText(reason) ||
-    "CEO emergency stop";
-
-  state.emergencyStopAt =
-    now();
-
-  await writeState(
-    state
-  );
-
-  return {
-    success: true,
-
-    status:
-      STATUS.EMERGENCY_STOP,
-
-    emergencyStop:
-      true,
-
-    reason:
-      state.emergencyStopReason,
-
-    activatedAt:
-      state.emergencyStopAt
-  };
-}
-
-
-export async function clearEmergencyStop() {
-  const state =
-    await readState();
-
-  state.emergencyStop =
-    false;
-
-  state.emergencyStopReason =
-    null;
-
-  state.emergencyStopClearedAt =
-    now();
-
-  await writeState(
-    state
-  );
-
-  return {
-    success: true,
-
-    status:
-      "EMERGENCY_STOP_CLEARED",
-
-    emergencyStop:
-      false
-  };
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| AUTOMATION START GATE
+| SCHEDULE EVALUATION
 |--------------------------------------------------------------------------
 |
 | IMPORTANT:
-| There is NO hard daily maximum here.
 |
-| The daily target is informational.
-| The system can continue beyond 5
-| when additional good topics exist.
+| DAILY_TARGET_VIDEOS = 5 is ONLY a target.
+|
+| It does NOT stop automation after 5.
+|
+| Example:
+|
+| 2 good topics  -> system may publish 2
+| 5 good topics  -> system may publish 5
+| 8 good topics  -> system may continue beyond 5
+|
+| Quality, safety, copyright, duplicate and CEO gates
+| still control every individual video.
 |--------------------------------------------------------------------------
 */
 
-export async function canStartAutomation({
+export async function evaluateSchedule({
+  region,
+  date = new Date(),
   requestedVideos = 1
 } = {}) {
 
-  const state =
-    await readState();
+  const normalizedRegion =
+    cleanText(region)
+      .toUpperCase();
 
-  const amount =
-    Math.max(
-      1,
-      Number(
-        requestedVideos
-      ) || 1
-    );
+  if (!REGIONS[normalizedRegion]) {
+    return {
+      allowed: false,
+
+      status:
+        "INVALID_REGION",
+
+      region:
+        normalizedRegion
+    };
+  }
+
+
+  const ceoStatus =
+    await getCEOAutomationStatus();
 
 
   if (
-    state.emergencyStop
+    ceoStatus.emergencyStop
   ) {
     return {
       allowed: false,
 
       status:
-        STATUS.EMERGENCY_STOP,
+        "EMERGENCY_STOP",
 
       reason:
-        state.emergencyStopReason ||
-        "Emergency STOP is active."
+        ceoStatus.emergencyStopReason ||
+        "CEO emergency stop is active.",
+
+      region:
+        normalizedRegion
     };
   }
 
 
   if (
-    state.mode ===
-    MODES.STOP
+    ceoStatus.mode ===
+    "STOP"
   ) {
     return {
       allowed: false,
 
       status:
-        STATUS.BLOCKED,
+        "CEO_STOP",
 
       reason:
-        "Automation mode is STOP."
+        "CEO automation mode is STOP.",
+
+      region:
+        normalizedRegion
     };
   }
 
 
-  const started =
-    Number(
-      state.daily.started || 0
+  const slot =
+    getCurrentScheduleSlot(
+      normalizedRegion,
+      date
     );
 
 
-  const target =
-    DAILY_TARGET_VIDEOS;
+  if (!slot) {
+    return {
+      allowed: false,
+
+      status:
+        "OUTSIDE_SCHEDULE_WINDOW",
+
+      region:
+        normalizedRegion,
+
+      timezone:
+        REGIONS[
+          normalizedRegion
+        ].timezone,
+
+      scheduleHours:
+        REGIONS[
+          normalizedRegion
+        ].hours
+    };
+  }
 
 
-  const targetRemaining =
-    Math.max(
-      0,
-      target - started
-    );
+  const startCheck =
+    await canStartAutomation({
+      requestedVideos
+    });
 
 
-  /*
-   * No daily hard maximum.
-   *
-   * More than the target is allowed.
-   */
+  if (!startCheck.allowed) {
+    return {
+      allowed: false,
+
+      status:
+        startCheck.status,
+
+      reason:
+        startCheck.reason,
+
+      region:
+        normalizedRegion,
+
+      scheduleSlotId:
+        slot.scheduleSlotId,
+
+      reservationKey:
+        slot.reservationKey
+    };
+  }
+
 
   return {
     allowed: true,
 
     status:
-      STATUS.READY,
-
-    mode:
-      state.mode,
-
-    dailyTarget:
-      target,
-
-    startedToday:
-      started,
-
-    targetRemaining,
-
-    requestedVideos:
-      amount,
-
-    targetReached:
-      started >= target,
-
-    overTarget:
-      Math.max(
-        0,
-        started - target
-      )
-  };
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| DAILY SLOT RESERVATION
-|--------------------------------------------------------------------------
-|
-| 5 is NOT a maximum.
-|
-| reservationKey protects against
-| duplicate execution of the SAME
-| schedule slot.
-|--------------------------------------------------------------------------
-*/
-
-export async function reserveDailySlot({
-  reservationKey = null,
-  region = null,
-  runId = null
-} = {}) {
-
-  const state =
-    await readState();
-
-
-  if (
-    state.emergencyStop
-  ) {
-    return {
-      success: false,
-
-      status:
-        STATUS.EMERGENCY_STOP,
-
-      reason:
-        state.emergencyStopReason ||
-        "Emergency STOP is active."
-    };
-  }
-
-
-  if (
-    state.mode ===
-    MODES.STOP
-  ) {
-    return {
-      success: false,
-
-      status:
-        STATUS.BLOCKED,
-
-      reason:
-        "Automation mode is STOP."
-    };
-  }
-
-
-  /*
-   * Same schedule slot:
-   * do not reserve twice.
-   */
-
-  if (
-    reservationKey &&
-    state.reservations[
-      reservationKey
-    ]
-  ) {
-
-    const existing =
-      state.reservations[
-        reservationKey
-      ];
-
-    return {
-      success: true,
-
-      status:
-        "ALREADY_RESERVED",
-
-      slot:
-        existing.slot,
-
-      dailyTarget:
-        DAILY_TARGET_VIDEOS,
-
-      startedToday:
-        Number(
-          state.daily.started || 0
-        ),
-
-      targetReached:
-        Number(
-          state.daily.started || 0
-        ) >=
-        DAILY_TARGET_VIDEOS,
-
-      reservation:
-        existing
-    };
-  }
-
-
-  /*
-   * No hard daily limit.
-   */
-
-  const nextSlot =
-    Number(
-      state.daily.started || 0
-    ) + 1;
-
-
-  state.daily.started =
-    nextSlot;
-
-
-  const reservation = {
-    reservationId:
-      createId(
-        "reservation"
-      ),
-
-    key:
-      reservationKey,
-
-    slot:
-      nextSlot,
+      "SCHEDULE_READY",
 
     region:
-      region
-        ? cleanText(region)
-        : null,
+      normalizedRegion,
 
-    runId:
-      runId
-        ? cleanText(runId)
-        : null,
+    timezone:
+      slot.timezone,
 
-    reservedAt:
-      now(),
+    localDate:
+      slot.localDate,
 
-    status:
-      "RESERVED"
-  };
+    scheduledHour:
+      slot.scheduledHour,
 
+    scheduleSlotId:
+      slot.scheduleSlotId,
 
-  if (
-    reservationKey
-  ) {
-    state.reservations[
-      reservationKey
-    ] =
-      reservation;
-  }
-
-
-  await writeState(
-    state
-  );
-
-
-  return {
-    success: true,
-
-    status:
-      "DAILY_SLOT_RESERVED",
-
-    slot:
-      nextSlot,
+    reservationKey:
+      slot.reservationKey,
 
     dailyTarget:
       DAILY_TARGET_VIDEOS,
 
     startedToday:
-      nextSlot,
+      startCheck.startedToday,
 
     targetReached:
-      nextSlot >=
-      DAILY_TARGET_VIDEOS,
+      Boolean(
+        startCheck.targetReached
+      ),
 
     overTarget:
-      Math.max(
-        0,
-        nextSlot -
-          DAILY_TARGET_VIDEOS
+      Number(
+        startCheck.overTarget || 0
       ),
 
-    remainingToTarget:
-      Math.max(
-        0,
-        DAILY_TARGET_VIDEOS -
-          nextSlot
-      ),
+    /*
+     * TRUE means the system is allowed
+     * to continue beyond 5 if more
+     * genuinely good topics are available.
+     */
 
-    reservation
+    canContinueBeyondTarget:
+      true
   };
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| VIDEO COMPLETION
+| RESERVE SCHEDULED RUN
+|--------------------------------------------------------------------------
+|
+| This protects the SAME schedule slot
+| from being executed twice.
+|
+| It is NOT a 5-video limit.
 |--------------------------------------------------------------------------
 */
 
-export async function markVideoCompleted() {
-
-  const state =
-    await readState();
-
-  state.daily.completed =
-    Number(
-      state.daily.completed || 0
-    ) + 1;
-
-  await writeState(
-    state
-  );
-
-  return {
-    success: true,
-
-    status:
-      "VIDEO_COMPLETED",
-
-    completedToday:
-      state.daily.completed,
-
-    dailyTarget:
-      DAILY_TARGET_VIDEOS
-  };
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| PUBLISH GATE
-|--------------------------------------------------------------------------
-*/
-
-export async function canPublish({
-  risk = "LOW",
-  requiresApproval = false
+export async function reserveScheduledRun({
+  region,
+  runId = null,
+  date = new Date()
 } = {}) {
 
-  const state =
-    await readState();
-
-  const normalizedRisk =
-    normalizeRisk(risk);
-
-
-  if (
-    state.emergencyStop
-  ) {
-    return {
-      allowed: false,
-
-      status:
-        STATUS.EMERGENCY_STOP,
-
-      reason:
-        "Emergency STOP is active."
-    };
-  }
-
-
-  if (
-    state.mode ===
-    MODES.STOP
-  ) {
-    return {
-      allowed: false,
-
-      status:
-        STATUS.BLOCKED,
-
-      reason:
-        "Automation mode is STOP."
-    };
-  }
-
-
-  /*
-   * REVIEW mode always requires
-   * CEO approval.
-   */
-
-  if (
-    state.mode ===
-    MODES.REVIEW
-  ) {
-    return {
-      allowed: false,
-
-      status:
-        STATUS.APPROVAL_REQUIRED,
-
-      reason:
-        "REVIEW mode requires CEO approval.",
-
-      mode:
-        state.mode,
-
-      risk:
-        normalizedRisk
-    };
-  }
-
-
-  /*
-   * MEDIUM and HIGH risk always
-   * require CEO approval.
-   */
-
-  if (
-    normalizedRisk === "MEDIUM" ||
-    normalizedRisk === "HIGH"
-  ) {
-    return {
-      allowed: false,
-
-      status:
-        STATUS.APPROVAL_REQUIRED,
-
-      reason:
-        `${normalizedRisk} risk requires CEO approval.`,
-
-      mode:
-        state.mode,
-
-      risk:
-        normalizedRisk
-    };
-  }
-
-
-  if (
-    requiresApproval
-  ) {
-    return {
-      allowed: false,
-
-      status:
-        STATUS.APPROVAL_REQUIRED,
-
-      reason:
-        "This job explicitly requires CEO approval."
-    };
-  }
-
-
-  return {
-    allowed: true,
-
-    status:
-      STATUS.READY,
-
-    mode:
-      state.mode,
-
-    risk:
-      normalizedRisk
-  };
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| CEO APPROVAL
-|--------------------------------------------------------------------------
-*/
-
-export async function createApprovalRequest({
-  runId,
-  reason = "",
-  risk = "MEDIUM",
-  metadata = {}
-} = {}) {
-
-  const state =
-    await readState();
-
-  const approvalId =
-    createId(
-      "approval"
-    );
-
-
-  const request = {
-    approvalId,
-
-    runId:
-      runId || null,
-
-    reason:
-      cleanText(reason),
-
-    risk:
-      normalizeRisk(risk),
-
-    status:
-      "PENDING",
-
-    createdAt:
-      now(),
-
-    decidedAt:
-      null,
-
-    metadata:
-      metadata || {}
-  };
-
-
-  state.approvals[
-    approvalId
-  ] =
-    request;
-
-
-  await writeState(
-    state
-  );
-
-
-  return {
-    success: true,
-
-    status:
-      "APPROVAL_CREATED",
-
-    request
-  };
-}
-
-
-export async function decideApproval({
-  approvalId,
-  decision,
-  note = ""
-} = {}) {
-
-  const state =
-    await readState();
-
-  const id =
-    cleanText(
-      approvalId
-    );
-
-
-  const request =
-    state.approvals[id];
-
-
-  if (!request) {
-    return {
-      success: false,
-
-      status:
-        "APPROVAL_NOT_FOUND"
-    };
-  }
-
-
-  const normalized =
-    cleanText(decision)
+  const normalizedRegion =
+    cleanText(region)
       .toUpperCase();
 
 
-  if (
-    ![
-      "APPROVED",
-      "REJECTED"
-    ].includes(normalized)
-  ) {
-    return {
-      success: false,
+  const evaluation =
+    await evaluateSchedule({
+      region:
+        normalizedRegion,
 
-      status:
-        "INVALID_DECISION"
-    };
+      date
+    });
+
+
+  if (!evaluation.allowed) {
+    return evaluation;
   }
 
 
-  request.status =
-    normalized;
+  const reservation =
+    await reserveDailySlot({
+      reservationKey:
+        evaluation.reservationKey,
 
-  request.note =
-    cleanText(note);
+      region:
+        normalizedRegion,
 
-  request.decidedAt =
-    now();
-
-
-  state.approvals[id] =
-    request;
-
-
-  await writeState(
-    state
-  );
+      runId:
+        runId ||
+        `scheduled-${Date.now()}`
+    });
 
 
   return {
-    success: true,
+    ...reservation,
 
-    status:
-      "APPROVAL_UPDATED",
+    region:
+      normalizedRegion,
 
-    request
-  };
-}
+    scheduleSlotId:
+      evaluation.scheduleSlotId,
 
+    reservationKey:
+      evaluation.reservationKey,
 
-export async function getApprovalRequest(
-  approvalId
-) {
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
 
-  const state =
-    await readState();
-
-  const id =
-    cleanText(
-      approvalId
-    );
-
-
-  if (!id) {
-    return {
-      success: false,
-
-      status:
-        "INVALID_APPROVAL_ID"
-    };
-  }
-
-
-  const request =
-    state.approvals[id];
-
-
-  if (!request) {
-    return {
-      success: false,
-
-      status:
-        "APPROVAL_NOT_FOUND"
-    };
-  }
-
-
-  return {
-    success: true,
-
-    status:
-      "APPROVAL_FOUND",
-
-    request
+    canContinueBeyondTarget:
+      true
   };
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| CEO STATUS
+| GET SCHEDULER STATUS
 |--------------------------------------------------------------------------
 */
 
-export async function getCEOAutomationStatus() {
+export async function getSchedulerStatus() {
 
-  const state =
-    await readState();
-
-
-  const approvals =
-    Object.values(
-      state.approvals
-    );
+  const ceoStatus =
+    await getCEOAutomationStatus();
 
 
-  const started =
+  const regions = {};
+
+
+  for (
+    const region of Object.keys(
+      REGIONS
+    )
+  ) {
+
+    const config =
+      REGIONS[region];
+
+    const local =
+      getLocalParts(
+        config.timezone
+      );
+
+
+    regions[region] = {
+      timezone:
+        config.timezone,
+
+      localTime:
+        `${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}`,
+
+      localDate:
+        `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`,
+
+      scheduleHours:
+        config.hours
+    };
+  }
+
+
+  const startedToday =
     Number(
-      state.daily.started || 0
-    );
-
-
-  const completed =
-    Number(
-      state.daily.completed || 0
+      ceoStatus.daily?.started || 0
     );
 
 
   return {
     success: true,
 
-    version:
-      state.version,
+    scheduler:
+      "WORLDWIDE",
 
-    mode:
-      state.mode,
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
 
-    emergencyStop:
-      Boolean(
-        state.emergencyStop
+    /*
+     * No hard maximum.
+     */
+
+    hardDailyMaximum:
+      false,
+
+    maximumVideosPerDay:
+      null,
+
+    startedToday,
+
+    targetReached:
+      startedToday >=
+      DAILY_TARGET_VIDEOS,
+
+    overTarget:
+      Math.max(
+        0,
+        startedToday -
+          DAILY_TARGET_VIDEOS
       ),
 
-    emergencyStopReason:
-      state.emergencyStopReason ||
-      null,
+    canContinueBeyondTarget:
+      true,
 
-    emergencyStopAt:
-      state.emergencyStopAt ||
-      null,
+    qualityOverQuantity:
+      true,
 
-    daily: {
+    regions,
 
-      date:
-        state.daily.date,
+    ceo: {
+      mode:
+        ceoStatus.mode,
 
-      /*
-       * 5 is the target.
-       * There is no hard maximum.
-       */
-
-      target:
-        DAILY_TARGET_VIDEOS,
-
-      dailyTarget:
-        DAILY_TARGET_VIDEOS,
-
-      started,
-
-      used:
-        started,
-
-      completed,
-
-      targetReached:
-        started >=
-        DAILY_TARGET_VIDEOS,
-
-      overTarget:
-        Math.max(
-          0,
-          started -
-            DAILY_TARGET_VIDEOS
-        ),
-
-      remainingToTarget:
-        Math.max(
-          0,
-          DAILY_TARGET_VIDEOS -
-            started
-        ),
-
-      maximum:
-        null,
-
-      maximumVideosPerDay:
-        null
-    },
-
-
-    approvals: {
-      total:
-        approvals.length,
-
-      pending:
-        approvals.filter(
-          (item) =>
-            item.status ===
-            "PENDING"
-        ).length,
-
-      approved:
-        approvals.filter(
-          (item) =>
-            item.status ===
-            "APPROVED"
-        ).length,
-
-      rejected:
-        approvals.filter(
-          (item) =>
-            item.status ===
-            "REJECTED"
-        ).length
-    },
-
-
-    safetyRules: {
-
-      dailyTarget:
-        DAILY_TARGET_VIDEOS,
-
-      hardDailyMaximum:
-        false,
-
-      moreThanTargetAllowed:
-        true,
-
-      fewerThanTargetAllowed:
-        true,
-
-      mediumRiskNeedsApproval:
-        true,
-
-      highRiskNeedsApproval:
-        true,
-
-      reviewModeNeedsApproval:
-        true,
-
-      stopBlocksNewAutomation:
-        true,
-
-      emergencyStopBlocksAutomation:
-        true,
-
-      duplicateReservationProtection:
-        true,
-
-      qualityOverQuantity:
-        true
-    },
-
-
-    storage: {
-      stateFile:
-        STATE_FILE
+      emergencyStop:
+        ceoStatus.emergencyStop
     }
   };
 }
@@ -1262,81 +505,70 @@ export async function getCEOAutomationStatus() {
 
 /*
 |--------------------------------------------------------------------------
-| RESET DAILY COUNTER
+| SCHEDULE CONFIG
 |--------------------------------------------------------------------------
 */
 
-export async function resetDailyCounter() {
-
-  const state =
-    await readState();
-
-
-  state.daily = {
-    date:
-      todayKey(),
-
-    target:
-      DAILY_TARGET_VIDEOS,
-
-    started:
-      0,
-
-    completed:
-      0
-  };
-
-
-  state.reservations =
-    {};
-
-
-  await writeState(
-    state
-  );
-
+export function getSchedulerConfig() {
 
   return {
-    success: true,
-
-    status:
-      "DAILY_COUNTER_RESET",
-
-    date:
-      state.daily.date,
-
     dailyTarget:
-      DAILY_TARGET_VIDEOS
+      DAILY_TARGET_VIDEOS,
+
+    hardDailyMaximum:
+      false,
+
+    scheduleWindowMinutes:
+      SCHEDULE_WINDOW_MINUTES,
+
+    continueBeyondTarget:
+      true,
+
+    qualityOverQuantity:
+      true,
+
+    regions:
+      REGIONS
   };
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| GUARD STATUS
+| HELPERS
 |--------------------------------------------------------------------------
 */
 
-export async function getCEOAutomationGuardStatus() {
+export function getSupportedRegions() {
+  return Object.keys(
+    REGIONS
+  );
+}
 
-  const status =
-    await getCEOAutomationStatus();
+
+export function isSupportedRegion(
+  region
+) {
+  return Boolean(
+    REGIONS[
+      cleanText(region)
+        .toUpperCase()
+    ]
+  );
+}
 
 
-  return {
-    ...status,
+export function getRegionConfig(
+  region
+) {
+  const normalized =
+    cleanText(region)
+      .toUpperCase();
 
-    configured:
-      true,
-
-    status:
-      status.emergencyStop
-        ? STATUS.EMERGENCY_STOP
-        : status.mode ===
-          MODES.STOP
-          ? STATUS.BLOCKED
-          : STATUS.READY
-  };
+  return (
+    REGIONS[normalized] ||
+    null
+  );
 }
 
 
@@ -1348,24 +580,19 @@ export async function getCEOAutomationGuardStatus() {
 
 export default {
 
-  setAutomationMode,
-  getAutomationMode,
+  evaluateSchedule,
 
-  activateEmergencyStop,
-  clearEmergencyStop,
+  reserveScheduledRun,
 
-  canStartAutomation,
-  reserveDailySlot,
-  markVideoCompleted,
+  getSchedulerStatus,
 
-  canPublish,
+  getSchedulerConfig,
 
-  createApprovalRequest,
-  decideApproval,
-  getApprovalRequest,
+  getSupportedRegions,
 
-  getCEOAutomationStatus,
-  getCEOAutomationGuardStatus,
+  isSupportedRegion,
 
-  resetDailyCounter
+  getRegionConfig,
+
+  getCurrentScheduleSlot
 };
