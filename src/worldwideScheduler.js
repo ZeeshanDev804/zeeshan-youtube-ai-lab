@@ -43,7 +43,8 @@ function getScheduleForRegion(region) {
 
   return DEFAULT_SCHEDULE.find(
     (entry) =>
-      entry.region === normalizedRegion
+      entry.region ===
+      normalizedRegion
   );
 }
 
@@ -73,7 +74,10 @@ function getLocalParts(
   const result = {};
 
   for (const part of parts) {
-    if (part.type !== "literal") {
+    if (
+      part.type !==
+      "literal"
+    ) {
       result[part.type] =
         part.value;
     }
@@ -101,60 +105,113 @@ function getLocalParts(
 }
 
 
+function getScheduleDifference(
+  hour,
+  minute,
+  scheduledHour
+) {
+  const currentMinutes =
+    hour * 60 +
+    minute;
+
+  const scheduledMinutes =
+    scheduledHour * 60;
+
+  return Math.abs(
+    currentMinutes -
+    scheduledMinutes
+  );
+}
+
+
 function isScheduledHour(
   hour,
   minute,
   scheduleHours
 ) {
   if (
-    !Array.isArray(scheduleHours) ||
+    !Array.isArray(
+      scheduleHours
+    ) ||
     scheduleHours.length === 0
   ) {
     return false;
   }
 
   return scheduleHours.some(
-    (scheduledHour) => {
-
-      const difference =
-        minute >= 0
-          ? Math.abs(
-              hour * 60 +
-              minute -
-              scheduledHour * 60
-            )
-          : Infinity;
-
-      return (
-        difference <
-        SCHEDULE_WINDOW_MINUTES
-      );
-    }
+    (scheduledHour) =>
+      getScheduleDifference(
+        hour,
+        minute,
+        scheduledHour
+      ) <
+      SCHEDULE_WINDOW_MINUTES
   );
 }
 
 
 function getCurrentScheduleSlot(
   hour,
+  minute,
   scheduleHours
 ) {
-  if (!Array.isArray(scheduleHours)) {
-    return null;
-  }
-
-  const matchingHour =
-    scheduleHours.find(
-      (scheduledHour) =>
-        scheduledHour === hour
-    );
-
   if (
-    matchingHour === undefined
+    !Array.isArray(
+      scheduleHours
+    )
   ) {
     return null;
   }
 
-  return matchingHour;
+  let closestSlot = null;
+
+  let closestDifference =
+    Infinity;
+
+  for (
+    const scheduledHour
+    of scheduleHours
+  ) {
+    const difference =
+      getScheduleDifference(
+        hour,
+        minute,
+        scheduledHour
+      );
+
+    if (
+      difference <
+      SCHEDULE_WINDOW_MINUTES &&
+      difference <
+      closestDifference
+    ) {
+      closestDifference =
+        difference;
+
+      closestSlot =
+        scheduledHour;
+    }
+  }
+
+  return closestSlot;
+}
+
+
+function createScheduleSlotId(
+  region,
+  local,
+  scheduledHour
+) {
+  return [
+    normalizeRegion(region),
+    local.year,
+    String(local.month)
+      .padStart(2, "0"),
+    String(local.day)
+      .padStart(2, "0"),
+    String(scheduledHour)
+      .padStart(2, "0")
+  ].join(":");
 }
 
 
@@ -186,15 +243,21 @@ export function getRegionalTime(
   date = new Date()
 ) {
   const item =
-    getScheduleForRegion(region);
+    getScheduleForRegion(
+      region
+    );
 
   if (!item) {
     return {
       success: false,
+
       status:
         "REGION_NOT_FOUND",
+
       region:
-        normalizeRegion(region)
+        normalizeRegion(
+          region
+        )
     };
   }
 
@@ -202,6 +265,13 @@ export function getRegionalTime(
     getLocalParts(
       item.timezone,
       date
+    );
+
+  const currentSlot =
+    getCurrentScheduleSlot(
+      local.hour,
+      local.minute,
+      item.hours
     );
 
   return {
@@ -216,7 +286,18 @@ export function getRegionalTime(
     ...local,
 
     scheduledHours:
-      [...item.hours]
+      [...item.hours],
+
+    currentSlot,
+
+    scheduleSlotId:
+      currentSlot !== null
+        ? createScheduleSlotId(
+            item.region,
+            local,
+            currentSlot
+          )
+        : null
   };
 }
 
@@ -227,15 +308,21 @@ export async function evaluateSchedule({
 } = {}) {
 
   const item =
-    getScheduleForRegion(region);
+    getScheduleForRegion(
+      region
+    );
 
   if (!item) {
     return {
       eligible: false,
+
       status:
         "REGION_NOT_FOUND",
+
       region:
-        normalizeRegion(region)
+        normalizeRegion(
+          region
+        )
     };
   }
 
@@ -247,28 +334,28 @@ export async function evaluateSchedule({
     );
 
 
-  const scheduled =
-    isScheduledHour(
+  const currentSlot =
+    getCurrentScheduleSlot(
       local.hour,
       local.minute,
       item.hours
     );
 
 
-  const currentSlot =
-    getCurrentScheduleSlot(
-      local.hour,
-      item.hours
-    );
+  const scheduled =
+    currentSlot !== null;
 
 
   const ceo =
     await getCEOAutomationStatus();
 
 
-  if (ceo?.emergencyStop) {
+  if (
+    ceo?.emergencyStop
+  ) {
     return {
       eligible: false,
+
       status:
         "EMERGENCY_STOP",
 
@@ -278,14 +365,20 @@ export async function evaluateSchedule({
       timezone:
         item.timezone,
 
-      local
+      local,
+
+      currentSlot
     };
   }
 
 
-  if (ceo?.mode === "STOP") {
+  if (
+    ceo?.mode ===
+    "STOP"
+  ) {
     return {
       eligible: false,
+
       status:
         "AUTOMATION_STOPPED",
 
@@ -295,14 +388,17 @@ export async function evaluateSchedule({
       timezone:
         item.timezone,
 
-      local
+      local,
+
+      currentSlot
     };
   }
 
 
   const startedToday =
     Number(
-      ceo?.daily?.started || 0
+      ceo?.daily?.started ||
+      0
     );
 
 
@@ -312,6 +408,7 @@ export async function evaluateSchedule({
   ) {
     return {
       eligible: false,
+
       status:
         "DAILY_LIMIT_REACHED",
 
@@ -323,10 +420,14 @@ export async function evaluateSchedule({
 
       local,
 
+      currentSlot,
+
       dailyLimit:
         MAX_DAILY_VIDEOS,
 
-      startedToday
+      startedToday,
+
+      dailyRemaining: 0
     };
   }
 
@@ -334,6 +435,7 @@ export async function evaluateSchedule({
   if (!scheduled) {
     return {
       eligible: false,
+
       status:
         "OUTSIDE_SCHEDULE",
 
@@ -344,6 +446,8 @@ export async function evaluateSchedule({
         item.timezone,
 
       local,
+
+      currentSlot: null,
 
       scheduledHours:
         item.hours,
@@ -378,7 +482,9 @@ export async function evaluateSchedule({
       timezone:
         item.timezone,
 
-      local
+      local,
+
+      currentSlot
     };
   }
 
@@ -402,6 +508,13 @@ export async function evaluateSchedule({
 
     currentSlot,
 
+    scheduleSlotId:
+      createScheduleSlotId(
+        item.region,
+        local,
+        currentSlot
+      ),
+
     windowMinutes:
       SCHEDULE_WINDOW_MINUTES,
 
@@ -415,7 +528,7 @@ export async function evaluateSchedule({
       Math.max(
         0,
         MAX_DAILY_VIDEOS -
-          startedToday
+        startedToday
       )
   };
 }
@@ -433,21 +546,77 @@ export async function reserveScheduledRun({
     });
 
 
-  if (!evaluation?.eligible) {
+  if (
+    !evaluation?.eligible
+  ) {
     return evaluation;
   }
 
 
   /*
-   * The CEO guard performs the actual
-   * daily-slot reservation.
+   * Final CEO check before
+   * consuming a production slot.
+   */
+
+  const ceo =
+    await getCEOAutomationStatus();
+
+
+  if (
+    ceo?.emergencyStop
+  ) {
+    return {
+      eligible: false,
+
+      status:
+        "EMERGENCY_STOP",
+
+      region:
+        evaluation.region,
+
+      timezone:
+        evaluation.timezone,
+
+      local:
+        evaluation.local
+    };
+  }
+
+
+  if (
+    ceo?.mode ===
+    "STOP"
+  ) {
+    return {
+      eligible: false,
+
+      status:
+        "AUTOMATION_STOPPED",
+
+      region:
+        evaluation.region,
+
+      timezone:
+        evaluation.timezone,
+
+      local:
+        evaluation.local
+    };
+  }
+
+
+  /*
+   * CEO guard performs the
+   * actual daily reservation.
    */
 
   const reservation =
     await reserveDailySlot();
 
 
-  if (!reservation?.success) {
+  if (
+    !reservation?.success
+  ) {
     return {
       eligible: false,
 
@@ -463,6 +632,12 @@ export async function reserveScheduledRun({
 
       local:
         evaluation.local,
+
+      currentSlot:
+        evaluation.currentSlot,
+
+      scheduleSlotId:
+        evaluation.scheduleSlotId,
 
       reservation
     };
@@ -487,16 +662,19 @@ export async function reserveScheduledRun({
     currentSlot:
       evaluation.currentSlot,
 
+    scheduleSlotId:
+      evaluation.scheduleSlotId,
+
     reservation,
 
     dailyRemaining:
       Math.max(
         0,
         MAX_DAILY_VIDEOS -
-          Number(
-            reservation?.daily?.started ||
-            0
-          )
+        Number(
+          reservation?.daily?.started ||
+          0
+        )
       )
   };
 }
@@ -510,13 +688,15 @@ export async function getSchedulerStatus() {
 
   const startedToday =
     Number(
-      ceo?.daily?.started || 0
+      ceo?.daily?.started ||
+      0
     );
 
 
   const completedToday =
     Number(
-      ceo?.daily?.completed || 0
+      ceo?.daily?.completed ||
+      0
     );
 
 
@@ -548,7 +728,7 @@ export async function getSchedulerStatus() {
       Math.max(
         0,
         MAX_DAILY_VIDEOS -
-          startedToday
+        startedToday
       ),
 
     regions:
