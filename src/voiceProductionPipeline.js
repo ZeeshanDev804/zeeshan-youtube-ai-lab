@@ -38,7 +38,8 @@ export async function generateProductionVoice({
   ) {
     return {
       success: false,
-      status: "VOICE_PROVIDER_REQUIRED",
+      status:
+        "VOICE_PROVIDER_REQUIRED",
       provider:
         providerStatus.provider ||
         "ElevenLabs",
@@ -59,7 +60,8 @@ export async function generateProductionVoice({
   if (!selectedVoice) {
     return {
       success: false,
-      status: "VOICE_ID_REQUIRED",
+      status:
+        "VOICE_ID_REQUIRED",
       error:
         "ELEVENLABS_VOICE_ID is required."
     };
@@ -72,22 +74,27 @@ export async function generateProductionVoice({
       outputDir
     });
 
-  if (!result.success) {
+  if (!result?.success) {
     return {
       success: false,
-      status: "VOICE_GENERATION_FAILED",
-      provider: "ElevenLabs",
-      providerResult: result
+      status:
+        "VOICE_GENERATION_FAILED",
+      provider:
+        "ElevenLabs",
+      providerResult:
+        result
     };
   }
 
   if (!result.outputFile) {
     return {
       success: false,
-      status: "VOICE_OUTPUT_MISSING",
+      status:
+        "VOICE_OUTPUT_MISSING",
       error:
         "ElevenLabs returned success but no audio output file.",
-      providerResult: result
+      providerResult:
+        result
     };
   }
 
@@ -99,27 +106,61 @@ export async function generateProductionVoice({
   if (!audioCheck.valid) {
     return {
       success: false,
-      status: "VOICE_OUTPUT_INVALID",
+      status:
+        "VOICE_OUTPUT_INVALID",
       error:
         audioCheck.reason ||
         "Generated audio file is invalid.",
-      providerResult: result
+      providerResult:
+        result
+    };
+  }
+
+  const durationSeconds =
+    Number(
+      audioCheck.durationSeconds
+    );
+
+  if (
+    !Number.isFinite(
+      durationSeconds
+    ) ||
+    durationSeconds <= 0
+  ) {
+    return {
+      success: false,
+      status:
+        "VOICE_DURATION_INVALID",
+      error:
+        "Generated voice audio has no valid duration.",
+      audioCheck,
+      providerResult:
+        result
     };
   }
 
   return {
     success: true,
-    status: "VOICE_READY",
-    provider: "ElevenLabs",
+    status:
+      "VOICE_READY",
+
+    provider:
+      "ElevenLabs",
+
     model:
       result.model ||
       providerStatus.model ||
       process.env.ELEVENLABS_MODEL_ID ||
       "eleven_multilingual_v2",
+
     outputFile:
       result.outputFile,
+
     sizeBytes:
       audioCheck.sizeBytes,
+
+    durationSeconds,
+
     format:
       audioCheck.extension
         ? audioCheck.extension.replace(
@@ -127,9 +168,15 @@ export async function generateProductionVoice({
             ""
           )
         : "mp3",
+
+    hasAudio:
+      audioCheck.hasAudio === true,
+
     language,
+
     voiceId:
       selectedVoice,
+
     createdAt:
       new Date().toISOString()
   };
@@ -143,18 +190,23 @@ export function getVoiceProductionStatus() {
     configured:
       providerStatus.status ===
       "CONFIGURED",
+
     provider:
       providerStatus.provider ||
       "ElevenLabs",
+
     status:
       providerStatus.status,
+
     model:
       providerStatus.model ||
       process.env.ELEVENLABS_MODEL_ID ||
       "eleven_multilingual_v2",
+
     commercialUse:
       providerStatus.commercialUse ||
       null,
+
     message:
       providerStatus.message ||
       "ElevenLabs voice provider status."
