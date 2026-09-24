@@ -2,8 +2,8 @@ name: ZEESHAN AI LABS - Automation Scheduler
 
 on:
   schedule:
-    # Run frequently so eligible worldwide schedule windows
-    # can be detected without making 5 videos/day a hard limit.
+    # Frequent checks allow worldwide schedule windows
+    # to be detected without creating a hard daily video limit.
     - cron: "*/15 * * * *"
 
   workflow_dispatch:
@@ -18,6 +18,7 @@ on:
           - USA
           - UK
           - EUROPE
+          - MIDDLE_EAST
 
       execute:
         description: "Execute automation"
@@ -64,6 +65,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
 
       # ------------------------------------------------------------
@@ -93,7 +95,9 @@ jobs:
           CEO_EMERGENCY_STOP: ${{ secrets.CEO_EMERGENCY_STOP }}
 
         run: |
-          echo "ZEESHAN AI LABS automation environment prepared."
+          echo "=============================================="
+          echo " ZEESHAN AI LABS - ENVIRONMENT CHECK"
+          echo "=============================================="
 
           if [ -n "$AI_API_KEY" ]; then
             echo "Gemini/API key: CONFIGURED"
@@ -112,6 +116,12 @@ jobs:
           else
             echo "YouTube OAuth: NOT_CONFIGURED"
           fi
+
+          echo "Automation target: 5 Shorts/day"
+          echo "Hard daily maximum: DISABLED"
+          echo "Additional strong topics: ALLOWED"
+          echo "CEO safety controls: ENABLED"
+          echo "=============================================="
 
 
       # ------------------------------------------------------------
@@ -163,7 +173,12 @@ jobs:
           console.log("Execute:", execute);
           console.log("Daily target: 5");
           console.log("Hard daily maximum: DISABLED");
-          console.log("More than 5 allowed when good topics exist.");
+          console.log("USA: ENABLED");
+          console.log("UK: ENABLED");
+          console.log("EUROPE: ENABLED");
+          console.log("MIDDLE EAST: ENABLED");
+          console.log("More than 5 allowed when strong topics exist.");
+          console.log("Weak/risky topics must not be generated just to hit target.");
           console.log("==============================================");
           console.log("");
 
@@ -178,7 +193,9 @@ jobs:
             );
 
             result =
-              await previewScheduledAutomation();
+              await previewScheduledAutomation({
+                region
+              });
 
           } else if (region === "ALL") {
 
@@ -194,6 +211,8 @@ jobs:
           }
 
 
+          console.log("");
+          console.log("AUTOMATION RESULT:");
           console.log(
             JSON.stringify(
               result,
@@ -201,6 +220,7 @@ jobs:
               2
             )
           );
+          console.log("");
 
 
           if (
