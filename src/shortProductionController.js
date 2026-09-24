@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import {
   createShortProductionManifest
 } from "./shortProductionManifest.js";
@@ -31,6 +34,126 @@ function isNonEmptyString(value) {
   );
 }
 
+async function validateMediaFile(
+  filePath,
+  label
+) {
+  if (!isNonEmptyString(filePath)) {
+    return {
+      valid: false,
+      error:
+        `${label} file path is required.`
+    };
+  }
+
+  const resolvedPath =
+    path.resolve(filePath);
+
+  try {
+    const stats =
+      await fs.stat(resolvedPath);
+
+    if (!stats.isFile()) {
+      return {
+        valid: false,
+        error:
+          `${label} is not a file.`
+      };
+    }
+
+    if (stats.size <= 0) {
+      return {
+        valid: false,
+        error:
+          `${label} file is empty.`
+      };
+    }
+
+    return {
+      valid: true,
+      path: resolvedPath,
+      sizeBytes:
+        stats.size
+    };
+  } catch {
+    return {
+      valid: false,
+      error:
+        `${label} file does not exist.`
+    };
+  }
+}
+
+async function validateCaptionFile(
+  captionFile
+) {
+  if (captionFile === null) {
+    return {
+      valid: true,
+      enabled: false
+    };
+  }
+
+  if (!isNonEmptyString(captionFile)) {
+    return {
+      valid: false,
+      error:
+        "Caption file must be a valid SRT file path."
+    };
+  }
+
+  const resolvedPath =
+    path.resolve(captionFile);
+
+  const extension =
+    path.extname(
+      resolvedPath
+    ).toLowerCase();
+
+  if (extension !== ".srt") {
+    return {
+      valid: false,
+      error:
+        "Caption file must use the .srt format."
+    };
+  }
+
+  try {
+    const stats =
+      await fs.stat(resolvedPath);
+
+    if (!stats.isFile()) {
+      return {
+        valid: false,
+        error:
+          "Caption file is not a file."
+      };
+    }
+
+    if (stats.size <= 0) {
+      return {
+        valid: false,
+        error:
+          "Caption file is empty."
+      };
+    }
+
+    return {
+      valid: true,
+      enabled: true,
+      path: resolvedPath,
+      sizeBytes:
+        stats.size
+    };
+  } catch {
+    return {
+      valid: false,
+      error:
+        "Caption file does not exist."
+    };
+  }
+}
+
 export async function prepareShortForPublishing({
   topic,
   script,
@@ -48,22 +171,46 @@ export async function prepareShortForPublishing({
   const errors = [];
 
   if (!cleanText(topic)) {
-    errors.push("Topic is required.");
+    errors.push(
+      "Topic is required."
+    );
   }
 
   if (!cleanText(script)) {
-    errors.push("Script is required.");
+    errors.push(
+      "Script is required."
+    );
   }
 
   if (!cleanText(finalVideoFile)) {
-    errors.push("Final video file is required.");
+    errors.push(
+      "Final video file is required."
+    );
   }
 
   if (errors.length > 0) {
     return {
       success: false,
-      status: "CONTROLLER_BLOCKED",
+      status:
+        "CONTROLLER_BLOCKED",
       errors
+    };
+  }
+
+  const finalMedia =
+    await validateMediaFile(
+      finalVideoFile,
+      "Final video"
+    );
+
+  if (!finalMedia.valid) {
+    return {
+      success: false,
+      status:
+        "FINAL_VIDEO_INVALID",
+      errors: [
+        finalMedia.error
+      ]
     };
   }
 
@@ -81,7 +228,8 @@ export async function prepareShortForPublishing({
   if (!manifest.success) {
     return {
       success: false,
-      status: "MANIFEST_FAILED",
+      status:
+        "MANIFEST_FAILED",
       errors:
         manifest.errors || [
           "Production manifest failed."
@@ -92,13 +240,15 @@ export async function prepareShortForPublishing({
   const qa =
     await runShortQualityPipeline({
       manifest,
-      finalVideoFile
+      finalVideoFile:
+        finalMedia.path
     });
 
-  if (!qa.passed) {
+  if (!qa?.passed) {
     return {
       success: false,
-      status: "QA_BLOCKED",
+      status:
+        "QA_BLOCKED",
       productionId:
         manifest.id,
       manifest,
@@ -111,7 +261,7 @@ export async function prepareShortForPublishing({
       manifest,
       qaResult: qa,
       videoFile:
-        finalVideoFile,
+        finalMedia.path,
       title,
       description,
       tags,
@@ -121,7 +271,8 @@ export async function prepareShortForPublishing({
   if (!uploadJob.success) {
     return {
       success: false,
-      status: "UPLOAD_JOB_BLOCKED",
+      status:
+        "UPLOAD_JOB_BLOCKED",
       productionId:
         manifest.id,
       manifest,
@@ -187,45 +338,133 @@ export async function buildFinalShort({
   if (errors.length > 0) {
     return {
       success: false,
-      status: "INVALID_MEDIA",
+      status:
+        "INVALID_MEDIA",
       errors
     };
   }
 
-  if (
-    captionFile !== null &&
-    !isNonEmptyString(captionFile)
-  ) {
+  const videoValidation =
+    await validateMediaFile(
+      videoFile,
+      "Video"
+    );
+
+  if (!videoValidation.valid) {
     return {
       success: false,
-      status: "INVALID_CAPTION",
+      status:
+        "VIDEO_FILE_INVALID",
       errors: [
-        "Caption file must be a valid SRT file path."
+        videoValidation.error
       ]
     };
   }
 
+  const audioValidation =
+    await validateMediaFile(
+      audioFile,
+      "Audio"
+    );
+
+  if (!audioValidation.valid) {
+    return {
+      success: false,
+      status:
+        "AUDIO_FILE_INVALID",
+      errors: [
+        audioValidation.error
+      ]
+    };
+  }
+
+  const captionValidation =
+    await validateCaptionFile(
+      captionFile
+    );
+
+  if (!captionValidation.valid) {
+    return {
+      success: false,
+      status:
+        "CAPTION_FILE_INVALID",
+      errors: [
+        captionValidation.error
+      ]
+    };
+  }
+
+  await fs.mkdir(
+    outputDir,
+    {
+      recursive: true
+    }
+  );
+
   const result =
     await renderFinalShort({
-      videoFile,
-      audioFile,
-      captionFile,
+      videoFile:
+        videoValidation.path,
+
+      audioFile:
+        audioValidation.path,
+
+      captionFile:
+        captionValidation.enabled
+          ? captionValidation.path
+          : null,
+
       title,
+
       outputDir
     });
 
-  if (!result.success) {
+  if (!result?.success) {
     return {
       success: false,
 
       status:
-        result.status ||
+        result?.status ||
         "FINAL_RENDER_FAILED",
 
       error:
-        result.error ||
+        result?.error ||
         "Final Short could not be created.",
 
+      details:
+        result
+    };
+  }
+
+  if (
+    !isNonEmptyString(
+      result.outputFile
+    )
+  ) {
+    return {
+      success: false,
+      status:
+        "FINAL_OUTPUT_MISSING",
+      error:
+        "Final renderer returned success without an output file.",
+      details:
+        result
+    };
+  }
+
+  const finalOutput =
+    await validateMediaFile(
+      result.outputFile,
+      "Final output"
+    );
+
+  if (!finalOutput.valid) {
+    return {
+      success: false,
+      status:
+        "FINAL_OUTPUT_INVALID",
+      error:
+        finalOutput.error,
       details:
         result
     };
@@ -239,21 +478,23 @@ export async function buildFinalShort({
       "FINAL_SHORT_READY",
 
     outputFile:
-      result.outputFile,
+      finalOutput.path,
 
     sizeBytes:
-      result.sizeBytes,
+      finalOutput.sizeBytes,
 
     captions:
       result.captions || {
         enabled:
-          Boolean(captionFile),
+          captionValidation.enabled,
+
         burnedIntoVideo:
-          Boolean(captionFile)
+          captionValidation.enabled
       },
 
     createdAt:
-      result.createdAt
+      result.createdAt ||
+      new Date().toISOString()
   };
 }
 
@@ -277,7 +518,8 @@ export function getShortProductionControllerStatus() {
   return {
     configured: true,
 
-    status: "READY",
+    status:
+      "READY",
 
     pipeline: [
       "TOPIC",
@@ -286,7 +528,9 @@ export function getShortProductionControllerStatus() {
       "VISUALS",
       "VIDEO",
       "CAPTIONS",
+      "MEDIA_VALIDATION",
       "FINAL_RENDER",
+      "FINAL_OUTPUT_VALIDATION",
       "QUALITY_ASSURANCE",
       "UPLOAD_AUTHORIZATION",
       "CEO_PUBLISH_GATE",
@@ -295,12 +539,22 @@ export function getShortProductionControllerStatus() {
 
     finalRender: {
       configured: true,
-      renderer: "finalShortRenderer",
-      captionSupport: true,
-      captionFormat: "SRT",
+      renderer:
+        "finalShortRenderer",
+      captionSupport:
+        true,
+      captionFormat:
+        "SRT",
       captionMode:
         "OPTIONAL_BURN_IN"
     },
+
+    validation: [
+      "video file existence",
+      "audio file existence",
+      "caption file validation",
+      "final output validation"
+    ],
 
     safetyGates: [
       "QA_REQUIRED",
@@ -310,7 +564,7 @@ export function getShortProductionControllerStatus() {
     ],
 
     message:
-      "Central Short production controller is ready with optional burned-in caption support."
+      "Central Short production controller validates media, renders the final Short, validates the final output, and sends only QA-approved media toward publishing."
   };
 }
 
