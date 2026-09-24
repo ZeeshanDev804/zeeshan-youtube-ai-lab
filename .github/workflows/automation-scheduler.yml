@@ -256,11 +256,73 @@ jobs:
           console.log("");
 
 
+          /*
+           * --------------------------------------------------------
+           * SCHEDULE SKIP IS NOT AN ERROR
+           * --------------------------------------------------------
+           *
+           * GitHub Actions checks every 15 minutes.
+           *
+           * Most runs will NOT fall inside a valid regional
+           * schedule window.
+           *
+           * These statuses are therefore successful no-op runs.
+           */
+
+          const successfulSkipStatuses = [
+            "OUTSIDE_SCHEDULE_WINDOW",
+            "SCHEDULED_AUTOMATION_SKIPPED",
+            "SCHEDULE_PREVIEW"
+          ];
+
+
+          const isSuccessfulSkip =
+            successfulSkipStatuses.includes(
+              result?.status
+            );
+
+
+          /*
+           * --------------------------------------------------------
+           * ACTUAL FAILURE CHECK
+           * --------------------------------------------------------
+           *
+           * Only real automation failures should make
+           * GitHub Actions exit with code 1.
+           */
+
           if (
             result?.success === false &&
-            result?.status !== "SCHEDULE_PREVIEW"
+            !isSuccessfulSkip
           ) {
+
+            console.error("");
+            console.error(
+              "REAL AUTOMATION FAILURE DETECTED."
+            );
+            console.error(
+              "Status:",
+              result?.status || "UNKNOWN"
+            );
+            console.error(
+              "Reason:",
+              result?.reason || "No reason provided."
+            );
+            console.error("");
+
             process.exitCode = 1;
+
+          } else {
+
+            console.log(
+              "Automation scheduler completed successfully."
+            );
+
+            if (isSuccessfulSkip) {
+              console.log(
+                "This run was a normal schedule skip/no-op."
+              );
+            }
           }
 
           NODE
