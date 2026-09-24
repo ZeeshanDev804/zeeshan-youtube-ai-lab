@@ -1,13 +1,11 @@
 import fs from "fs";
 import { google } from "googleapis";
-import dotenv from "dotenv";
 
 import config from "./config.js";
+
 import {
   canUploadToYouTube as canUploadFromGuard
 } from "./youtubeUploadGuard.js";
-
-dotenv.config();
 
 function cleanText(value = "") {
   return String(value)
@@ -37,7 +35,12 @@ function getYouTubeCredentials() {
     refreshToken:
       config?.youtube?.refreshToken ||
       process.env.YOUTUBE_REFRESH_TOKEN ||
-      ""
+      "",
+
+    redirectUri:
+      config?.youtube?.redirectUri ||
+      process.env.YOUTUBE_REDIRECT_URI ||
+      "http://localhost"
   };
 }
 
@@ -70,8 +73,7 @@ function createOAuthClient() {
     new google.auth.OAuth2(
       credentials.clientId,
       credentials.clientSecret,
-      process.env.YOUTUBE_REDIRECT_URI ||
-        "http://localhost"
+      credentials.redirectUri
     );
 
   oauth2Client.setCredentials({
@@ -83,25 +85,46 @@ function createOAuthClient() {
 }
 
 function getYouTubeClient() {
-  const auth =
-    createOAuthClient();
-
   return google.youtube({
     version: "v3",
-    auth
+    auth:
+      createOAuthClient()
   });
 }
 
 function getPrivacyStatus(job = {}) {
-  return (
-    cleanText(
-      job.privacyStatus ||
-      job.metadata?.privacyStatus ||
-      config?.youtube?.privacyStatus ||
-      process.env.YOUTUBE_PRIVACY_STATUS ||
-      "private"
-    ).toLowerCase()
-  );
+  return cleanText(
+    job.privacyStatus ||
+    job.metadata?.privacyStatus ||
+    config?.youtube?.privacyStatus ||
+    "private"
+  ).toLowerCase();
+}
+
+function validatePrivacyStatus(
+  privacyStatus
+) {
+  const validStatuses = [
+    "private",
+    "unlisted",
+    "public"
+  ];
+
+  if (
+    !validStatuses.includes(
+      privacyStatus
+    )
+  ) {
+    return {
+      valid: false,
+      error:
+        "Invalid YouTube privacy status."
+    };
+  }
+
+  return {
+    valid: true
+  };
 }
 
 function validateUploadJob({
@@ -184,11 +207,20 @@ function validateUploadJob({
     );
   }
 
-  if (
-    !isNonEmptyString(
-      String(categoryId)
-    )
-  ) {
+  const cleanTags =
+    Array.isArray(tags)
+      ? tags
+          .map(cleanText)
+          .filter(Boolean)
+          .slice(0, 30)
+      : [];
+
+  const normalizedCategory =
+    String(
+      categoryId || ""
+    ).trim();
+
+  if (!normalizedCategory) {
     errors.push(
       "YouTube category ID is required."
     );
@@ -197,20 +229,100 @@ function validateUploadJob({
   return {
     valid:
       errors.length === 0,
+
     errors,
+
     title:
       cleanTitle,
+
     description:
       cleanDescription,
+
     tags:
-      Array.isArray(tags)
-        ? tags
-            .map(cleanText)
-            .filter(Boolean)
-            .slice(0, 30)
-        : [],
+      cleanTags,
+
     categoryId:
-      String(categoryId)
+      normalizedCategory
+  };
+}
+
+function validatePublishAuthorization(
+  job = {}
+) {
+  /*
+   * Final publishing authorization must come
+   * from publishGate.js.
+   *
+   * The uploader itself does not create
+   * CEO approval decisions.
+   */
+
+  const authorization =
+    job.publishDecision ||
+    job.publishAuthorization ||
+    null;
+
+  if (!authorization) {
+    return {
+      allowed: true,
+      reason:
+        "No separate publish decision object was supplied; Upload Guard authorization will be enforced."
+    };
+  }
+
+  if (
+    authorization.allowed !== true ||
+    authorization.success !== true
+  ) {
+    return {
+      allowed: false,
+      reason:
+        authorization.reason ||
+        "YouTube publish gate has not authorized this upload."
+    };
+  }
+
+  return {
+    allowed: true,
+    reason:
+      "YouTube publish gate authorized the upload."
+  };
+}
+
+function createUploadStream(
+  videoPath
+) {
+  const stream =
+    fs.createReadStream(
+      videoPath
+    );
+
+  return stream;
+}
+
+function normalizeYouTubeError(
+  error
+) {
+  return {
+    message:
+      error?.message ||
+      "YouTube upload failed.",
+
+    name:
+      error?.name ||
+      "YouTubeUploadError",
+
+    code:
+      error?.code ||
+      null,
+
+    status:
+      error?.response?.status ||
+      null,
+
+    reason:
+      error?.response?.data?.error?.errors?.[0]?.reason ||
+      null
   };
 }
 
@@ -220,12 +332,14 @@ export function getYouTubeStatus() {
 
   return {
     configured,
+
     privacyStatus:
       config?.youtube?.privacyStatus ||
-      process.env.YOUTUBE_PRIVACY_STATUS ||
       "private",
+
     uploadReady:
       configured,
+
     oauth:
       configured
         ? "CONFIGURED"
@@ -236,6 +350,12 @@ export function getYouTubeStatus() {
 export async function uploadToYouTube(
   job = {}
 ) {
+  /*
+   * ------------------------------------------------
+   * 1. UPLOAD GUARD
+   * ------------------------------------------------
+   */
+
   const guardAuthorization =
     canUploadFromGuard(
       job.uploadJob ||
@@ -247,13 +367,74 @@ export async function uploadToYouTube(
   ) {
     return {
       uploaded: false,
+
       status:
         "UPLOAD_BLOCKED",
+
       message:
         guardAuthorization.reason,
+
       job
     };
   }
+
+  /*
+   * ------------------------------------------------
+   * 2. FINAL PUBLISH GATE
+   * ------------------------------------------------
+   */
+
+  const publishAuthorization =
+    validatePublishAuthorization(
+      job
+    );
+
+  if (
+    !publishAuthorization.allowed
+  ) {
+    return {
+      uploaded: false,
+
+      status:
+        "PUBLISH_GATE_BLOCKED",
+
+      message:
+        publishAuthorization.reason,
+
+      job
+    };
+  }
+
+  /*
+   * ------------------------------------------------
+   * 3. EMERGENCY STOP
+   * ------------------------------------------------
+   */
+
+  if (
+    config.system.emergencyStop === true ||
+    String(
+      config.system.mode
+    ).toUpperCase() === "STOP"
+  ) {
+    return {
+      uploaded: false,
+
+      status:
+        "EMERGENCY_STOP",
+
+      message:
+        "YouTube upload was stopped by the system safety control.",
+
+      job
+    };
+  }
+
+  /*
+   * ------------------------------------------------
+   * 4. OAUTH CONFIGURATION
+   * ------------------------------------------------
+   */
 
   const status =
     getYouTubeStatus();
@@ -261,13 +442,22 @@ export async function uploadToYouTube(
   if (!status.configured) {
     return {
       uploaded: false,
+
       status:
         "NOT_CONFIGURED",
+
       message:
         "YouTube OAuth credentials are not configured.",
+
       job
     };
   }
+
+  /*
+   * ------------------------------------------------
+   * 5. INPUT DATA
+   * ------------------------------------------------
+   */
 
   const videoPath =
     job.videoFile ||
@@ -279,58 +469,89 @@ export async function uploadToYouTube(
   const validation =
     validateUploadJob({
       videoPath,
+
       title:
         metadata.title ||
         job.title,
+
       description:
         metadata.description ||
         job.description ||
         "",
+
       tags:
         metadata.tags ||
         job.tags ||
         [],
+
       categoryId:
         metadata.categoryId ||
         job.categoryId ||
+        config.youtube.categoryId ||
         "22"
     });
 
   if (!validation.valid) {
     return {
       uploaded: false,
+
       status:
         "UPLOAD_VALIDATION_FAILED",
+
       errors:
         validation.errors,
+
       job
     };
   }
+
+  /*
+   * ------------------------------------------------
+   * 6. PRIVACY
+   * ------------------------------------------------
+   */
 
   const privacyStatus =
     getPrivacyStatus(job);
 
+  const privacyValidation =
+    validatePrivacyStatus(
+      privacyStatus
+    );
+
   if (
-    ![
-      "private",
-      "unlisted",
-      "public"
-    ].includes(privacyStatus)
+    !privacyValidation.valid
   ) {
     return {
       uploaded: false,
+
       status:
         "UPLOAD_VALIDATION_FAILED",
+
       errors: [
-        "Invalid YouTube privacy status."
+        privacyValidation.error
       ],
+
       job
     };
   }
 
+  /*
+   * ------------------------------------------------
+   * 7. REAL YOUTUBE API UPLOAD
+   * ------------------------------------------------
+   */
+
+  let uploadStream = null;
+
   try {
     const youtube =
       getYouTubeClient();
+
+    uploadStream =
+      createUploadStream(
+        videoPath
+      );
 
     const response =
       await youtube.videos.insert({
@@ -338,77 +559,123 @@ export async function uploadToYouTube(
           "snippet",
           "status"
         ],
+
         requestBody: {
           snippet: {
             title:
               validation.title,
+
             description:
               validation.description,
+
             tags:
               validation.tags,
+
             categoryId:
               validation.categoryId
           },
+
           status: {
             privacyStatus
           }
         },
+
         media: {
           body:
-            fs.createReadStream(
-              videoPath
-            )
-        }
+            uploadStream
+        },
+
+        /*
+         * Explicit resumable upload.
+         * googleapis handles the upload session.
+         */
+        resumable: true
       });
 
     const videoId =
-      response?.data?.id || null;
+      response?.data?.id ||
+      null;
 
     if (!videoId) {
       return {
         uploaded: false,
+
         status:
           "UPLOAD_FAILED",
+
         message:
           "YouTube API returned no video ID.",
+
         job
       };
     }
 
     return {
       uploaded: true,
+
       status:
         "UPLOADED",
+
       videoId,
+
       url:
         `https://www.youtube.com/watch?v=${videoId}`,
+
       privacyStatus,
+
       metadata: {
         title:
           validation.title,
+
         description:
           validation.description,
+
         tags:
           validation.tags,
+
         categoryId:
           validation.categoryId
       },
+
       uploadedAt:
         new Date().toISOString()
     };
   } catch (error) {
+    const normalizedError =
+      normalizeYouTubeError(
+        error
+      );
+
     return {
       uploaded: false,
+
       status:
         "UPLOAD_FAILED",
+
       message:
-        error?.message ||
-        "YouTube upload failed.",
+        normalizedError.message,
+
       errorName:
-        error?.name ||
-        "YouTubeUploadError",
+        normalizedError.name,
+
+      errorCode:
+        normalizedError.code,
+
+      apiStatus:
+        normalizedError.status,
+
+      apiReason:
+        normalizedError.reason,
+
       job
     };
+  } finally {
+    if (
+      uploadStream &&
+      !uploadStream.destroyed
+    ) {
+      uploadStream.destroy();
+    }
   }
 }
 
