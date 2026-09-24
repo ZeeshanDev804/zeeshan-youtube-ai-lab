@@ -24,11 +24,103 @@ import {
   getShortProductionControllerStatus
 } from "./shortProductionController.js";
 
+import {
+  getYouTubePublishGateStatus
+} from "./youtubePublishGate.js";
+
 function check(name, condition) {
   return {
     name,
     passed: Boolean(condition)
   };
+}
+
+function normalize(value) {
+  return String(
+    value ?? ""
+  )
+    .trim()
+    .toUpperCase();
+}
+
+function firstDefined(
+  ...values
+) {
+  return values.find(
+    (value) =>
+      value !== undefined &&
+      value !== null
+  );
+}
+
+function getRiskPolicy(
+  youtube,
+  publishGate
+) {
+  const source =
+    publishGate ||
+    youtube ||
+    {};
+
+  const policy =
+    source.policy ||
+    source.riskPolicy ||
+    {};
+
+  return {
+    low:
+      normalize(
+        firstDefined(
+          policy.low,
+          policy.lowRisk,
+          source.lowRisk,
+          source.low
+        )
+      ),
+
+    medium:
+      normalize(
+        firstDefined(
+          policy.medium,
+          policy.mediumRisk,
+          source.mediumRisk,
+          source.medium
+        )
+      ),
+
+    high:
+      normalize(
+        firstDefined(
+          policy.high,
+          policy.highRisk,
+          source.highRisk,
+          source.high
+        )
+      ),
+
+    stop:
+      normalize(
+        firstDefined(
+          policy.stop,
+          policy.stopRisk,
+          source.stop,
+          source.stopRisk
+        )
+      )
+  };
+}
+
+function getPrivacy(
+  youtube
+) {
+  return normalize(
+    firstDefined(
+      youtube?.defaultPrivacy,
+      youtube?.privacy,
+      youtube?.uploadDefaults?.privacy,
+      youtube?.defaults?.privacy
+    )
+  );
 }
 
 export function runFinalSystemTest() {
@@ -48,23 +140,168 @@ export function runFinalSystemTest() {
     "========================================"
   );
 
-  const system =
-    getSystemStatus();
+  /*
+   * ----------------------------------------
+   * 1. SYSTEM / CEO CONTROL
+   * ----------------------------------------
+   */
 
-  const production =
-    getFinalShortProductionStatus();
+  let system;
 
-  const qa =
-    getFinalShortQAStatus();
+  try {
+    system =
+      getSystemStatus();
+  } catch (error) {
+    system = {
+      status: "ERROR",
+      error:
+        error?.message ||
+        "CEO control status failed."
+    };
+  }
 
-  const youtube =
-    getYouTubeProductionStatus();
+  /*
+   * ----------------------------------------
+   * 2. FINAL PRODUCTION
+   * ----------------------------------------
+   */
 
-  const uploader =
-    getYouTubeProductionUploaderStatus();
+  let production;
 
-  const controller =
-    getShortProductionControllerStatus();
+  try {
+    production =
+      getFinalShortProductionStatus();
+  } catch (error) {
+    production = {
+      status: "ERROR",
+      error:
+        error?.message ||
+        "Final production status failed."
+    };
+  }
+
+  /*
+   * ----------------------------------------
+   * 3. FINAL QA
+   * ----------------------------------------
+   */
+
+  let qa;
+
+  try {
+    qa =
+      getFinalShortQAStatus();
+  } catch (error) {
+    qa = {
+      status: "ERROR",
+      error:
+        error?.message ||
+        "Final QA status failed."
+    };
+  }
+
+  /*
+   * ----------------------------------------
+   * 4. YOUTUBE PRODUCTION PIPELINE
+   * ----------------------------------------
+   */
+
+  let youtube;
+
+  try {
+    youtube =
+      getYouTubeProductionStatus();
+  } catch (error) {
+    youtube = {
+      status: "ERROR",
+      error:
+        error?.message ||
+        "YouTube production status failed."
+    };
+  }
+
+  /*
+   * ----------------------------------------
+   * 5. YOUTUBE UPLOADER
+   * ----------------------------------------
+   */
+
+  let uploader;
+
+  try {
+    uploader =
+      getYouTubeProductionUploaderStatus();
+  } catch (error) {
+    uploader = {
+      status: "ERROR",
+      error:
+        error?.message ||
+        "YouTube uploader status failed."
+    };
+  }
+
+  /*
+   * ----------------------------------------
+   * 6. PRODUCTION CONTROLLER
+   * ----------------------------------------
+   */
+
+  let controller;
+
+  try {
+    controller =
+      getShortProductionControllerStatus();
+  } catch (error) {
+    controller = {
+      status: "ERROR",
+      error:
+        error?.message ||
+        "Production controller status failed."
+    };
+  }
+
+  /*
+   * ----------------------------------------
+   * 7. PUBLISH GATE
+   * ----------------------------------------
+   */
+
+  let publishGate;
+
+  try {
+    publishGate =
+      getYouTubePublishGateStatus();
+  } catch (error) {
+    publishGate = {
+      status: "ERROR",
+      error:
+        error?.message ||
+        "YouTube publish gate status failed."
+    };
+  }
+
+  /*
+   * ----------------------------------------
+   * RISK POLICY
+   * ----------------------------------------
+   */
+
+  const riskPolicy =
+    getRiskPolicy(
+      youtube,
+      publishGate
+    );
+
+  const privacy =
+    getPrivacy(
+      youtube
+    );
+
+  /*
+   * ----------------------------------------
+   * SYSTEM CHECKS
+   * ----------------------------------------
+   */
 
   const checks = [
     check(
@@ -74,55 +311,119 @@ export function runFinalSystemTest() {
     ),
 
     check(
-      "SHORT PRODUCTION",
-      production.status ===
-      "READY"
+      "FINAL SHORT PRODUCTION",
+      normalize(
+        production?.status
+      ) === "READY"
     ),
 
     check(
-      "QUALITY ASSURANCE",
-      qa.status ===
-      "READY"
+      "FINAL QUALITY ASSURANCE",
+      normalize(
+        qa?.status
+      ) === "READY"
     ),
 
     check(
-      "YOUTUBE PIPELINE",
-      youtube.status ===
-      "READY"
+      "YOUTUBE PRODUCTION PIPELINE",
+      normalize(
+        youtube?.status
+      ) === "READY"
     ),
 
     check(
-      "YOUTUBE UPLOADER",
-      uploader.status ===
-      "CONFIGURED" ||
-      uploader.status ===
-      "NOT_CONFIGURED"
+      "YOUTUBE UPLOADER STATUS",
+      [
+        "CONFIGURED",
+        "NOT_CONFIGURED"
+      ].includes(
+        normalize(
+          uploader?.status
+        )
+      )
     ),
 
     check(
       "PRODUCTION CONTROLLER",
-      controller.status ===
-      "READY"
+      normalize(
+        controller?.status
+      ) === "READY"
     ),
 
     check(
-      "HIGH RISK BLOCK",
-      youtube.highRisk ===
-      "BLOCKED"
+      "YOUTUBE PUBLISH GATE",
+      normalize(
+        publishGate?.status
+      ) === "READY"
+    ),
+
+    /*
+     * Final risk policy:
+     *
+     * LOW    → Auto policy
+     * MEDIUM → CEO review
+     * HIGH   → CEO review
+     * STOP   → Blocked
+     */
+
+    check(
+      "LOW RISK AUTO POLICY",
+      [
+        "AUTO_PUBLISH_WHEN_POLICY_ALLOWS",
+        "AUTO",
+        "AUTO_PUBLISH",
+        "ALLOWED"
+      ].includes(
+        riskPolicy.low
+      )
     ),
 
     check(
-      "MEDIUM RISK REVIEW",
-      youtube.mediumRisk ===
-      "CEO_REVIEW"
+      "MEDIUM RISK CEO REVIEW",
+      [
+        "CEO_REVIEW_REQUIRED",
+        "CEO_REVIEW",
+        "REVIEW",
+        "REVIEW_REQUIRED"
+      ].includes(
+        riskPolicy.medium
+      )
+    ),
+
+    check(
+      "HIGH RISK CEO REVIEW",
+      [
+        "CEO_REVIEW_REQUIRED",
+        "CEO_REVIEW",
+        "REVIEW",
+        "REVIEW_REQUIRED"
+      ].includes(
+        riskPolicy.high
+      )
+    ),
+
+    check(
+      "STOP / EMERGENCY BLOCK",
+      [
+        "BLOCKED",
+        "STOP",
+        "EMERGENCY_STOP"
+      ].includes(
+        riskPolicy.stop
+      )
     ),
 
     check(
       "DEFAULT PRIVATE",
-      youtube.defaultPrivacy ===
-      "private"
+      privacy === "PRIVATE"
     )
   ];
+
+  /*
+   * ----------------------------------------
+   * RESULT
+   * ----------------------------------------
+   */
 
   const passed =
     checks.filter(
@@ -166,12 +467,41 @@ export function runFinalSystemTest() {
 
   console.log(
     "\nCURRENT MODE:",
-    system.mode
+    system?.mode
   );
 
   console.log(
     "YOUTUBE UPLOADER:",
-    uploader.status
+    uploader?.status
+  );
+
+  console.log(
+    "PUBLISH GATE:",
+    publishGate?.status
+  );
+
+  console.log(
+    "\nRISK POLICY:"
+  );
+
+  console.log(
+    "LOW:",
+    riskPolicy.low
+  );
+
+  console.log(
+    "MEDIUM:",
+    riskPolicy.medium
+  );
+
+  console.log(
+    "HIGH:",
+    riskPolicy.high
+  );
+
+  console.log(
+    "STOP:",
+    riskPolicy.stop
   );
 
   console.log(
@@ -184,6 +514,10 @@ export function runFinalSystemTest() {
 
   console.log(
     "This test does NOT publish anything."
+  );
+
+  console.log(
+    "Real YouTube OAuth/upload must still be tested separately."
   );
 
   return {
@@ -200,11 +534,19 @@ export function runFinalSystemTest() {
 
     checks,
 
-    youtubeUploader:
-      uploader.status,
-
     currentMode:
-      system.mode,
+      system?.mode,
+
+    youtubeUploader:
+      uploader?.status,
+
+    publishGate:
+      publishGate?.status,
+
+    riskPolicy,
+
+    defaultPrivacy:
+      privacy,
 
     testedAt:
       new Date().toISOString()
@@ -216,5 +558,12 @@ if (
     "--test"
   )
 ) {
-  runFinalSystemTest();
+  const result =
+    runFinalSystemTest();
+
+  if (
+    result.success !== true
+  ) {
+    process.exitCode = 1;
+  }
 }
