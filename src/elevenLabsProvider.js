@@ -1,5 +1,8 @@
+import "dotenv/config";
+
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const DEFAULT_OUTPUT_DIR = "./storage/audio";
 
@@ -10,15 +13,19 @@ function cleanText(value = "") {
 }
 
 function createAudioId() {
-  return `audio_${Date.now()}`;
+  return `audio_${Date.now()}_${crypto
+    .randomBytes(4)
+    .toString("hex")}`;
 }
 
 function getConfig() {
   return {
     apiKey:
       process.env.ELEVENLABS_API_KEY || "",
+
     voiceId:
       process.env.ELEVENLABS_VOICE_ID || "",
+
     modelId:
       process.env.ELEVENLABS_MODEL_ID ||
       "eleven_multilingual_v2"
@@ -68,22 +75,64 @@ function validateInput({
   }
 
   return {
-    valid: errors.length === 0,
+    valid:
+      errors.length === 0,
+
     errors,
-    text: cleanTextValue
+
+    text:
+      cleanTextValue
   };
+}
+
+async function readProviderError(response) {
+  try {
+    const contentType =
+      response.headers.get(
+        "content-type"
+      ) || "";
+
+    if (
+      contentType.includes(
+        "application/json"
+      )
+    ) {
+      const json =
+        await response.json();
+
+      return (
+        json?.detail?.message ||
+        json?.detail ||
+        json?.message ||
+        JSON.stringify(json)
+      );
+    }
+
+    const text =
+      await response.text();
+
+    return (
+      text ||
+      "ElevenLabs request failed."
+    );
+
+  } catch {
+    return "ElevenLabs request failed.";
+  }
 }
 
 export function getElevenLabsStatus() {
   const config =
     getConfig();
 
+  const configured =
+    Boolean(
+      config.apiKey &&
+      config.voiceId
+    );
+
   return {
-    configured:
-      Boolean(
-        config.apiKey &&
-        config.voiceId
-      ),
+    configured,
 
     provider:
       "ElevenLabs",
@@ -91,17 +140,22 @@ export function getElevenLabsStatus() {
     model:
       config.modelId,
 
+    voiceConfigured:
+      Boolean(config.voiceId),
+
+    apiKeyConfigured:
+      Boolean(config.apiKey),
+
     status:
-      config.apiKey &&
-      config.voiceId
+      configured
         ? "CONFIGURED"
         : "NOT_CONFIGURED",
 
     commercialUse:
-      "PAID_PLAN_REQUIRED",
+      "VERIFY_CURRENT_PLAN_RIGHTS",
 
     message:
-      "ElevenLabs TTS adapter is ready. Commercial monetized use requires appropriate paid-plan rights."
+      "ElevenLabs TTS adapter is configured for API-based voice generation. Verify the current ElevenLabs plan and usage rights before monetized production use."
   };
 }
 
@@ -110,7 +164,11 @@ export async function generateElevenLabsVoice({
   voiceId,
   outputDir =
     DEFAULT_OUTPUT_DIR,
-  modelId
+  modelId,
+  stability,
+  similarityBoost,
+  style,
+  useSpeakerBoost = true
 } = {}) {
   const config =
     getConfig();
@@ -135,7 +193,10 @@ export async function generateElevenLabsVoice({
   if (!validation.valid) {
     return {
       success: false,
-      status: "NOT_CONFIGURED",
+
+      status:
+        "NOT_CONFIGURED",
+
       errors:
         validation.errors
     };
@@ -162,6 +223,64 @@ export async function generateElevenLabsVoice({
       finalVoiceId
     )}?output_format=mp3_44100_128`;
 
+  const voiceSettings = {};
+
+  if (
+    typeof stability === "number" &&
+    Number.isFinite(stability)
+  ) {
+    voiceSettings.stability =
+      Math.max(
+        0,
+        Math.min(
+          1,
+          stability
+        )
+      );
+  }
+
+  if (
+    typeof similarityBoost === "number" &&
+    Number.isFinite(similarityBoost)
+  ) {
+    voiceSettings.similarity_boost =
+      Math.max(
+        0,
+        Math.min(
+          1,
+          similarityBoost
+        )
+      );
+  }
+
+  if (
+    typeof style === "number" &&
+    Number.isFinite(style)
+  ) {
+    voiceSettings.style =
+      Math.max(
+        0,
+        Math.min(
+          1,
+          style
+        )
+      );
+  }
+
+  voiceSettings.use_speaker_boost =
+    Boolean(useSpeakerBoost);
+
+  const requestBody = {
+    text:
+      validation.text,
+
+    model_id:
+      finalModelId,
+
+    voice_settings:
+      voiceSettings
+  };
+
   try {
     const response =
       await fetch(
@@ -174,35 +293,70 @@ export async function generateElevenLabsVoice({
               config.apiKey,
 
             "Content-Type":
-              "application/json"
+              "application/json",
+
+            "Accept":
+              "audio/mpeg"
           },
 
           body:
-            JSON.stringify({
-              text:
-                validation.text,
-
-              model_id:
-                finalModelId
-            })
+            JSON.stringify(
+              requestBody
+            )
         }
       );
 
     if (!response.ok) {
-      const errorText =
-        await response.text();
+      const error =
+        await readProviderError(
+          response
+        );
 
       return {
         success: false,
+
         status:
           "PROVIDER_ERROR",
 
         httpStatus:
           response.status,
 
+        voiceId:
+          finalVoiceId,
+
+        model:
+          finalModelId,
+
+        error
+      };
+    }
+
+    const contentType =
+      response.headers.get(
+        "content-type"
+      ) || "";
+
+    if (
+      contentType &&
+      !contentType.includes(
+        "audio"
+      )
+    ) {
+      const unexpectedResponse =
+        await response.text();
+
+      return {
+        success: false,
+
+        status:
+          "INVALID_AUDIO_RESPONSE",
+
+        httpStatus:
+          response.status,
+
         error:
-          errorText ||
-          "ElevenLabs request failed."
+          unexpectedResponse ||
+          "ElevenLabs did not return an audio response."
       };
     }
 
@@ -216,6 +370,7 @@ export async function generateElevenLabsVoice({
     ) {
       return {
         success: false,
+
         status:
           "EMPTY_AUDIO",
 
@@ -233,6 +388,21 @@ export async function generateElevenLabsVoice({
       await fs.stat(
         outputFile
       );
+
+    if (
+      !stats.isFile() ||
+      stats.size <= 0
+    ) {
+      return {
+        success: false,
+
+        status:
+          "INVALID_AUDIO_FILE",
+
+        error:
+          "Generated audio file is missing or empty."
+      };
+    }
 
     return {
       success: true,
@@ -257,6 +427,10 @@ export async function generateElevenLabsVoice({
       format:
         "mp3",
 
+      contentType:
+        contentType ||
+        "audio/mpeg",
+
       createdAt:
         new Date().toISOString()
     };
@@ -267,6 +441,12 @@ export async function generateElevenLabsVoice({
 
       status:
         "PROVIDER_ERROR",
+
+      voiceId:
+        finalVoiceId,
+
+      model:
+        finalModelId,
 
       error:
         error?.message ||
