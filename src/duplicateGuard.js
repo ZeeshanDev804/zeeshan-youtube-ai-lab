@@ -3,6 +3,11 @@ import crypto from "node:crypto";
 const DEFAULT_SIMILARITY_THRESHOLD = 0.82;
 const TITLE_SIMILARITY_THRESHOLD = 0.75;
 
+const MIN_TITLE_LENGTH = 3;
+const MIN_SCRIPT_LENGTH = 40;
+
+const NGRAM_SIZE = 3;
+
 function normalizeText(text = "") {
   return String(text)
     .toLowerCase()
@@ -19,15 +24,40 @@ function getWords(text = "") {
 }
 
 function getWordSet(text = "") {
-  return new Set(getWords(text));
+  return new Set(
+    getWords(text)
+  );
 }
 
-function getNgrams(text = "", size = 3) {
-  const words = getWords(text);
+function getNgrams(
+  text = "",
+  size = NGRAM_SIZE
+) {
+  const words =
+    getWords(text);
+
   const ngrams = [];
 
-  for (let i = 0; i <= words.length - size; i += 1) {
-    ngrams.push(words.slice(i, i + size).join(" "));
+  if (
+    words.length < size
+  ) {
+    return ngrams;
+  }
+
+  for (
+    let index = 0;
+    index <=
+    words.length - size;
+    index += 1
+  ) {
+    ngrams.push(
+      words
+        .slice(
+          index,
+          index + size
+        )
+        .join(" ")
+    );
   }
 
   return ngrams;
@@ -36,80 +66,176 @@ function getNgrams(text = "", size = 3) {
 function sha256(text = "") {
   return crypto
     .createHash("sha256")
-    .update(normalizeText(text))
+    .update(
+      normalizeText(text),
+      "utf8"
+    )
     .digest("hex");
 }
 
-export function calculateWordSimilarity(textA = "", textB = "") {
-  const setA = getWordSet(textA);
-  const setB = getWordSet(textB);
+function isValidTitle(
+  title = ""
+) {
+  return (
+    normalizeText(title)
+      .length >=
+    MIN_TITLE_LENGTH
+  );
+}
 
-  if (setA.size === 0 || setB.size === 0) {
+function isValidScript(
+  script = ""
+) {
+  return (
+    normalizeText(script)
+      .length >=
+    MIN_SCRIPT_LENGTH
+  );
+}
+
+export function calculateWordSimilarity(
+  textA = "",
+  textB = ""
+) {
+  const setA =
+    getWordSet(textA);
+
+  const setB =
+    getWordSet(textB);
+
+  if (
+    setA.size === 0 ||
+    setB.size === 0
+  ) {
     return 0;
   }
 
   let intersection = 0;
 
-  for (const word of setA) {
-    if (setB.has(word)) {
+  for (
+    const word of setA
+  ) {
+    if (
+      setB.has(word)
+    ) {
       intersection += 1;
     }
   }
 
-  const union = new Set([
-    ...setA,
-    ...setB
-  ]).size;
+  const union =
+    new Set([
+      ...setA,
+      ...setB
+    ]).size;
 
-  return union === 0
-    ? 0
-    : intersection / union;
+  if (union === 0) {
+    return 0;
+  }
+
+  return Number(
+    (
+      intersection /
+      union
+    ).toFixed(4)
+  );
 }
 
 export function calculateNgramSimilarity(
   textA = "",
   textB = "",
-  size = 3
+  size = NGRAM_SIZE
 ) {
-  const ngramsA = new Set(getNgrams(textA, size));
-  const ngramsB = new Set(getNgrams(textB, size));
+  const ngramsA =
+    new Set(
+      getNgrams(
+        textA,
+        size
+      )
+    );
 
-  if (ngramsA.size === 0 || ngramsB.size === 0) {
+  const ngramsB =
+    new Set(
+      getNgrams(
+        textB,
+        size
+      )
+    );
+
+  if (
+    ngramsA.size === 0 ||
+    ngramsB.size === 0
+  ) {
     return 0;
   }
 
   let intersection = 0;
 
-  for (const phrase of ngramsA) {
-    if (ngramsB.has(phrase)) {
+  for (
+    const phrase of ngramsA
+  ) {
+    if (
+      ngramsB.has(
+        phrase
+      )
+    ) {
       intersection += 1;
     }
   }
 
-  const union = new Set([
-    ...ngramsA,
-    ...ngramsB
-  ]).size;
+  const union =
+    new Set([
+      ...ngramsA,
+      ...ngramsB
+    ]).size;
 
-  return union === 0
-    ? 0
-    : intersection / union;
+  if (union === 0) {
+    return 0;
+  }
+
+  return Number(
+    (
+      intersection /
+      union
+    ).toFixed(4)
+  );
 }
 
 export function calculateSimilarity(
   textA = "",
   textB = ""
 ) {
-  const wordSimilarity = calculateWordSimilarity(
-    textA,
-    textB
-  );
+  const normalizedA =
+    normalizeText(textA);
 
-  const ngramSimilarity = calculateNgramSimilarity(
-    textA,
-    textB,
-    3
-  );
+  const normalizedB =
+    normalizeText(textB);
+
+  if (
+    !normalizedA ||
+    !normalizedB
+  ) {
+    return 0;
+  }
+
+  if (
+    normalizedA ===
+    normalizedB
+  ) {
+    return 1;
+  }
+
+  const wordSimilarity =
+    calculateWordSimilarity(
+      normalizedA,
+      normalizedB
+    );
+
+  const ngramSimilarity =
+    calculateNgramSimilarity(
+      normalizedA,
+      normalizedB,
+      NGRAM_SIZE
+    );
 
   return Number(
     (
@@ -123,12 +249,28 @@ export function createContentFingerprint({
   title = "",
   script = ""
 } = {}) {
+  const normalizedTitle =
+    normalizeText(title);
+
+  const normalizedScript =
+    normalizeText(script);
+
+  const combined =
+    `${normalizedTitle}\n${normalizedScript}`;
+
   return {
-    titleHash: sha256(title),
-    scriptHash: sha256(script),
-    combinedHash: sha256(
-      `${title}\n${script}`
-    )
+    titleHash:
+      sha256(
+        normalizedTitle
+      ),
+
+    scriptHash:
+      sha256(
+        normalizedScript
+      ),
+
+    combinedHash:
+      sha256(combined)
   };
 }
 
@@ -137,31 +279,103 @@ export function compareContent({
   script = "",
   existingContent = []
 } = {}) {
-  const currentTitle = normalizeText(title);
-  const currentScript = normalizeText(script);
+  const currentTitle =
+    normalizeText(title);
 
-  const fingerprint = createContentFingerprint({
-    title,
-    script
-  });
+  const currentScript =
+    normalizeText(script);
+
+  const validationErrors =
+    [];
+
+  if (
+    !isValidTitle(
+      currentTitle
+    )
+  ) {
+    validationErrors.push(
+      "Title is missing or too short."
+    );
+  }
+
+  if (
+    !isValidScript(
+      currentScript
+    )
+  ) {
+    validationErrors.push(
+      "Script is missing or too short."
+    );
+  }
+
+  const fingerprint =
+    createContentFingerprint({
+      title: currentTitle,
+      script: currentScript
+    });
+
+  if (
+    validationErrors.length >
+    0
+  ) {
+    return {
+      valid: false,
+
+      isDuplicate: false,
+
+      requiresReview: false,
+
+      fingerprint,
+
+      matches: [],
+
+      validationErrors
+    };
+  }
+
+  const contentList =
+    Array.isArray(
+      existingContent
+    )
+      ? existingContent
+      : [];
 
   const matches = [];
 
-  for (const item of existingContent) {
-    if (!item || typeof item !== "object") {
+  for (
+    const item of contentList
+  ) {
+    if (
+      !item ||
+      typeof item !==
+        "object"
+    ) {
       continue;
     }
 
     const existingTitle =
-      item.title || "";
+      normalizeText(
+        item.title || ""
+      );
 
     const existingScript =
-      item.script || "";
+      normalizeText(
+        item.script || ""
+      );
+
+    if (
+      !existingTitle &&
+      !existingScript
+    ) {
+      continue;
+    }
 
     const existingFingerprint =
       createContentFingerprint({
-        title: existingTitle,
-        script: existingScript
+        title:
+          existingTitle,
+        script:
+          existingScript
       });
 
     if (
@@ -170,7 +384,13 @@ export function compareContent({
     ) {
       matches.push({
         type: "EXACT",
+
         similarity: 1,
+
+        titleSimilarity: 1,
+
+        scriptSimilarity: 1,
+
         item
       });
 
@@ -192,8 +412,10 @@ export function compareContent({
     const overallSimilarity =
       Number(
         (
-          titleSimilarity * 0.25 +
-          scriptSimilarity * 0.75
+          titleSimilarity *
+            0.25 +
+          scriptSimilarity *
+            0.75
         ).toFixed(4)
       );
 
@@ -205,26 +427,40 @@ export function compareContent({
     ) {
       matches.push({
         type: "SIMILAR",
+
         titleSimilarity,
+
         scriptSimilarity,
-        similarity: overallSimilarity,
+
+        similarity:
+          overallSimilarity,
+
         item
       });
     }
   }
 
+  const exactDuplicate =
+    matches.some(
+      (match) =>
+        match.type ===
+        "EXACT"
+    );
+
   return {
+    valid: true,
+
     isDuplicate:
-      matches.some(
-        (match) => match.type === "EXACT"
-      ),
+      exactDuplicate,
 
     requiresReview:
       matches.length > 0,
 
     fingerprint,
 
-    matches
+    matches,
+
+    validationErrors: []
   };
 }
 
@@ -233,34 +469,58 @@ export function checkDuplicateContent({
   script = "",
   existingContent = []
 } = {}) {
-  const result = compareContent({
-    title,
-    script,
-    existingContent
-  });
+  const result =
+    compareContent({
+      title,
+      script,
+      existingContent
+    });
 
-  if (result.isDuplicate) {
+  if (
+    !result.valid
+  ) {
     return {
       status: "BLOCK",
+
       reason:
-        "Exact duplicate content detected.",
+        "Invalid content cannot pass duplicate protection.",
+
       ...result
     };
   }
 
-  if (result.requiresReview) {
+  if (
+    result.isDuplicate
+  ) {
+    return {
+      status: "BLOCK",
+
+      reason:
+        "Exact duplicate content detected.",
+
+      ...result
+    };
+  }
+
+  if (
+    result.requiresReview
+  ) {
     return {
       status: "REVIEW",
+
       reason:
-        "Similar existing content detected.",
+        "Similar existing content detected. Human/CEO review is required before publishing.",
+
       ...result
     };
   }
 
   return {
     status: "PASS",
+
     reason:
       "No significant duplicate detected.",
+
     ...result
   };
 }
@@ -269,16 +529,84 @@ export function buildDuplicateRecord({
   title = "",
   script = "",
   videoId = null,
-  publishedAt = null
+  publishedAt = null,
+  contentStatus = "PUBLISHED"
 } = {}) {
-  return {
-    videoId,
-    title,
-    script,
-    publishedAt,
-    fingerprint: createContentFingerprint({
+  const fingerprint =
+    createContentFingerprint({
       title,
       script
-    })
+    });
+
+  return {
+    videoId,
+
+    title:
+      String(title).trim(),
+
+    script:
+      String(script).trim(),
+
+    publishedAt,
+
+    contentStatus,
+
+    fingerprint,
+
+    createdAt:
+      new Date().toISOString()
   };
 }
+
+export function getDuplicateGuardStatus() {
+  return {
+    configured: true,
+
+    status: "READY",
+
+    thresholds: {
+      overallSimilarity:
+        DEFAULT_SIMILARITY_THRESHOLD,
+
+      titleSimilarity:
+        TITLE_SIMILARITY_THRESHOLD
+    },
+
+    decisions: {
+      exact:
+        "BLOCK",
+
+      similar:
+        "REVIEW",
+
+      new:
+        "PASS",
+
+      invalid:
+        "BLOCK"
+    },
+
+    checks: [
+      "exact content fingerprint",
+      "title similarity",
+      "script similarity",
+      "word similarity",
+      "n-gram similarity",
+      "invalid content blocking"
+    ],
+
+    message:
+      "Duplicate Guard blocks exact duplicates, sends highly similar content to review, and allows sufficiently original content."
+  };
+}
+
+export default {
+  calculateWordSimilarity,
+  calculateNgramSimilarity,
+  calculateSimilarity,
+  createContentFingerprint,
+  compareContent,
+  checkDuplicateContent,
+  buildDuplicateRecord,
+  getDuplicateGuardStatus
+};
