@@ -5,11 +5,13 @@ import {
 } from "@google/genai";
 
 const apiKey =
+  process.env.AI_API_KEY ||
   process.env.GEMINI_API_KEY ||
   process.env.GOOGLE_API_KEY ||
   "";
 
 const model =
+  process.env.AI_MODEL ||
   process.env.GEMINI_MODEL ||
   "gemini-3.8-flash";
 
@@ -34,14 +36,16 @@ export function getGeminiStatus() {
 
 export async function generateGeminiText({
   prompt,
-  systemInstruction = ""
+  systemInstruction = "",
+  thinkingLevel = "low",
+  temperature
 } = {}) {
   if (!client) {
     return {
       success: false,
       status: "NOT_CONFIGURED",
       reason:
-        "GEMINI_API_KEY or GOOGLE_API_KEY is not configured."
+        "AI_API_KEY, GEMINI_API_KEY or GOOGLE_API_KEY is not configured."
     };
   }
 
@@ -53,16 +57,54 @@ export async function generateGeminiText({
     };
   }
 
+  const cleanPrompt = prompt.trim();
+
+  if (!cleanPrompt) {
+    return {
+      success: false,
+      status: "INVALID_INPUT",
+      reason: "The prompt cannot be empty."
+    };
+  }
+
   try {
-    const input = systemInstruction
-      ? `${systemInstruction}\n\n${prompt}`
-      : prompt;
+    const request = {
+      model,
+      input: cleanPrompt
+    };
+
+    if (
+      systemInstruction &&
+      typeof systemInstruction === "string"
+    ) {
+      request.system_instruction =
+        systemInstruction.trim();
+    }
+
+    const generationConfig = {};
+
+    if (thinkingLevel) {
+      generationConfig.thinking_level =
+        thinkingLevel;
+    }
+
+    if (
+      typeof temperature === "number" &&
+      Number.isFinite(temperature)
+    ) {
+      generationConfig.temperature =
+        temperature;
+    }
+
+    if (Object.keys(generationConfig).length > 0) {
+      request.generation_config =
+        generationConfig;
+    }
 
     const response =
-      await client.interactions.create({
-        model,
-        input
-      });
+      await client.interactions.create(
+        request
+      );
 
     const output =
       response?.output_text ||
@@ -72,6 +114,7 @@ export async function generateGeminiText({
       return {
         success: false,
         status: "EMPTY_RESPONSE",
+        model,
         reason:
           "Gemini returned an empty response."
       };
