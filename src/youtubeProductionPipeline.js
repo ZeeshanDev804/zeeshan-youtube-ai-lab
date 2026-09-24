@@ -34,6 +34,29 @@ function normalizeTags(tags = []) {
     .slice(0, 30);
 }
 
+function normalizeRiskLevel(
+  riskLevel
+) {
+  const normalized =
+    cleanText(
+      riskLevel
+    ).toUpperCase();
+
+  if (
+    normalized === "HIGH"
+  ) {
+    return "HIGH";
+  }
+
+  if (
+    normalized === "MEDIUM"
+  ) {
+    return "MEDIUM";
+  }
+
+  return "LOW";
+}
+
 export async function prepareShortForYouTube({
   manifest,
   finalVideoFile,
@@ -46,7 +69,9 @@ export async function prepareShortForYouTube({
   requiresCEOApproval = true
 } = {}) {
   const videoFile =
-    cleanText(finalVideoFile);
+    cleanText(
+      finalVideoFile
+    );
 
   if (!manifest) {
     return {
@@ -89,7 +114,9 @@ export async function prepareShortForYouTube({
       success: false,
       status:
         "QA_BLOCKED",
-      qa
+      qa,
+      videoFile,
+      uploaded: false
     };
   }
 
@@ -99,6 +126,25 @@ export async function prepareShortForYouTube({
    * --------------------------------------------------
    */
 
+  const finalTitle =
+    cleanText(
+      title ||
+      manifest?.metadata?.title ||
+      ""
+    );
+
+  const finalDescription =
+    cleanText(
+      description ||
+      manifest?.metadata?.description ||
+      ""
+    );
+
+  const finalTags =
+    normalizeTags(
+      tags
+    );
+
   const uploadJob =
     createYouTubeUploadJob({
       manifest,
@@ -106,24 +152,21 @@ export async function prepareShortForYouTube({
       videoFile,
 
       title:
-        cleanText(
-          title ||
-          manifest?.metadata?.title ||
-          ""
-        ),
+        finalTitle,
 
       description:
-        cleanText(
-          description ||
-          manifest?.metadata?.description ||
-          ""
-        ),
+        finalDescription,
 
       tags:
-        normalizeTags(tags),
+        finalTags,
 
-      privacyStatus,
-      categoryId
+      privacyStatus:
+        privacyStatus ||
+        "private",
+
+      categoryId:
+        categoryId ||
+        "22"
     });
 
   if (
@@ -135,7 +178,9 @@ export async function prepareShortForYouTube({
       status:
         "UPLOAD_JOB_BLOCKED",
       qa,
-      uploadJob
+      uploadJob,
+      videoFile,
+      uploaded: false
     };
   }
 
@@ -145,17 +190,25 @@ export async function prepareShortForYouTube({
    * --------------------------------------------------
    */
 
+  const normalizedRisk =
+    normalizeRiskLevel(
+      riskLevel
+    );
+
   const publishDecision =
     evaluateYouTubePublish({
       uploadJob,
-      riskLevel,
+      riskLevel:
+        normalizedRisk,
       requiresCEOApproval
     });
 
   /*
    * IMPORTANT:
-   * Never upload unless the publish gate
-   * explicitly authorizes publishing.
+   *
+   * No real YouTube upload is allowed
+   * unless the central publish gate
+   * explicitly authorizes it.
    */
 
   if (
@@ -164,6 +217,7 @@ export async function prepareShortForYouTube({
   ) {
     return {
       success: false,
+
       status:
         publishDecision?.status ||
         "PUBLISH_BLOCKED",
@@ -173,6 +227,9 @@ export async function prepareShortForYouTube({
       uploadJob,
 
       publishDecision,
+
+      riskLevel:
+        normalizedRisk,
 
       videoFile,
 
@@ -193,10 +250,12 @@ export async function prepareShortForYouTube({
     getYouTubeOAuthStatus();
 
   if (
-    !oauthStatus.configured
+    !oauthStatus ||
+    oauthStatus.configured !== true
   ) {
     return {
       success: false,
+
       status:
         "YOUTUBE_OAUTH_NOT_CONFIGURED",
 
@@ -208,12 +267,18 @@ export async function prepareShortForYouTube({
 
       oauthStatus,
 
+      riskLevel:
+        normalizedRisk,
+
       videoFile,
 
       uploaded: false,
 
       message:
-        "YouTube OAuth credentials are required before the video can be uploaded."
+        "YouTube OAuth credentials are required before the video can be uploaded.",
+
+      createdAt:
+        new Date().toISOString()
     };
   }
 
@@ -228,27 +293,21 @@ export async function prepareShortForYouTube({
       videoFile,
 
       title:
-        cleanText(
-          title ||
-          manifest?.metadata?.title ||
-          uploadJob?.title ||
-          ""
-        ),
+        finalTitle ||
+        uploadJob?.title ||
+        "",
 
       description:
-        cleanText(
-          description ||
-          manifest?.metadata?.description ||
-          uploadJob?.description ||
-          ""
-        ),
+        finalDescription ||
+        uploadJob?.description ||
+        "",
 
       tags:
-        normalizeTags(
-          tags.length
-            ? tags
-            : uploadJob?.tags || []
-        ),
+        finalTags.length > 0
+          ? finalTags
+          : normalizeTags(
+              uploadJob?.tags || []
+            ),
 
       categoryId:
         categoryId ||
@@ -267,6 +326,7 @@ export async function prepareShortForYouTube({
   ) {
     return {
       success: false,
+
       status:
         "YOUTUBE_UPLOAD_FAILED",
 
@@ -279,6 +339,9 @@ export async function prepareShortForYouTube({
       oauthStatus,
 
       upload,
+
+      riskLevel:
+        normalizedRisk,
 
       videoFile,
 
@@ -308,6 +371,9 @@ export async function prepareShortForYouTube({
     publishDecision,
 
     oauthStatus,
+
+    riskLevel:
+      normalizedRisk,
 
     upload: {
       success:
@@ -345,8 +411,20 @@ export async function prepareShortForYouTube({
 }
 
 export function getYouTubeProductionStatus() {
-  const oauth =
-    getYouTubeOAuthStatus();
+  let oauth;
+
+  try {
+    oauth =
+      getYouTubeOAuthStatus();
+  } catch (error) {
+    oauth = {
+      configured: false,
+      status: "ERROR",
+      error:
+        error?.message ||
+        "YouTube OAuth status check failed."
+    };
+  }
 
   return {
     configured: true,
@@ -369,25 +447,53 @@ export function getYouTubeProductionStatus() {
     defaultPrivacy:
       "private",
 
-    highRisk:
-      "BLOCKED",
-
-    mediumRisk:
-      "CEO_REVIEW",
+    /*
+     * Final risk policy:
+     *
+     * LOW    → Auto publish when
+     *           central policy allows.
+     *
+     * MEDIUM → CEO review required.
+     *
+     * HIGH   → CEO review required.
+     *
+     * STOP / Emergency → Blocked.
+     */
 
     lowRisk:
-      "CEO_AUTO_PUBLISH_POLICY",
+      "AUTO_PUBLISH_WHEN_POLICY_ALLOWS",
+
+    mediumRisk:
+      "CEO_REVIEW_REQUIRED",
+
+    highRisk:
+      "CEO_REVIEW_REQUIRED",
+
+    stopRisk:
+      "BLOCKED",
+
+    emergencyStop:
+      "BLOCKED",
 
     oauthStatus:
-      oauth.status,
+      oauth?.status ||
+      "UNKNOWN",
 
     youtubeUpload:
-      oauth.configured
+      oauth?.configured === true
         ? "CONFIGURED"
         : "NOT_CONFIGURED",
 
+    productionUploadAllowedOnlyAfter:
+      [
+        "FINAL_QA_PASS",
+        "UPLOAD_GUARD_PASS",
+        "PUBLISH_GATE_AUTHORIZATION",
+        "YOUTUBE_OAUTH"
+      ],
+
     message:
-      "Final Shorts pass QA and CEO publishing gates before the real YouTube OAuth uploader is allowed to upload."
+      "Final Shorts must pass QA, Upload Guard, and the central CEO Publish Gate before the real YouTube OAuth uploader can upload."
   };
 }
 
