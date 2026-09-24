@@ -14,6 +14,11 @@ import {
   buildFinalShort
 } from "./shortProductionController.js";
 
+import {
+  createCaptionTimeline,
+  saveSRT
+} from "./captionEngine.js";
+
 function cleanText(value = "") {
   return String(value)
     .replace(/\s+/g, " ")
@@ -29,21 +34,18 @@ export async function produceFinalShort({
   audioDir = "./storage/audio",
   videoDir = "./storage/videos",
   finalDir = "./storage/final",
+  captionDir = "./storage/captions",
   durationPerScene = 5,
   fps = 30
 } = {}) {
-  const cleanTopic =
-    cleanText(topic);
-
-  const cleanScript =
-    cleanText(script);
+  const cleanTopic = cleanText(topic);
+  const cleanScript = cleanText(script);
 
   if (!cleanTopic) {
     return {
       success: false,
       status: "INVALID_TOPIC",
-      error:
-        "Topic is required."
+      error: "Topic is required."
     };
   }
 
@@ -51,18 +53,20 @@ export async function produceFinalShort({
     return {
       success: false,
       status: "INVALID_SCRIPT",
-      error:
-        "Script is required."
+      error: "Script is required."
     };
   }
 
-  const voice =
-    await generateProductionVoice({
-      script: cleanScript,
-      language,
-      voiceId,
-      outputDir: audioDir
-    });
+  // --------------------------------------------------
+  // 1. VOICE
+  // --------------------------------------------------
+
+  const voice = await generateProductionVoice({
+    script: cleanScript,
+    language,
+    voiceId,
+    outputDir: audioDir
+  });
 
   if (!voice.success) {
     return {
@@ -73,13 +77,16 @@ export async function produceFinalShort({
     };
   }
 
-  const visuals =
-    await generateProductionVisuals({
-      script: cleanScript,
-      topic: cleanTopic,
-      outputDir: assetsDir,
-      aspectRatio: "9:16"
-    });
+  // --------------------------------------------------
+  // 2. VISUALS
+  // --------------------------------------------------
+
+  const visuals = await generateProductionVisuals({
+    script: cleanScript,
+    topic: cleanTopic,
+    outputDir: assetsDir,
+    aspectRatio: "9:16"
+  });
 
   if (!visuals.success) {
     return {
@@ -91,14 +98,16 @@ export async function produceFinalShort({
     };
   }
 
-  const visualVideo =
-    await createVisualVideo({
-      scenes:
-        visuals.scenes,
-      outputDir: videoDir,
-      durationPerScene,
-      fps
-    });
+  // --------------------------------------------------
+  // 3. VISUAL VIDEO
+  // --------------------------------------------------
+
+  const visualVideo = await createVisualVideo({
+    scenes: visuals.scenes,
+    outputDir: videoDir,
+    durationPerScene,
+    fps
+  });
 
   if (!visualVideo.success) {
     return {
@@ -111,17 +120,16 @@ export async function produceFinalShort({
     };
   }
 
-  const finalVideo =
-    await buildFinalShort({
-      videoFile:
-        visualVideo.outputFile,
-      audioFile:
-        voice.outputFile,
-      title:
-        cleanTopic,
-      outputDir:
-        finalDir
-    });
+  // --------------------------------------------------
+  // 4. FINAL AUDIO + VIDEO MERGE
+  // --------------------------------------------------
+
+  const finalVideo = await buildFinalShort({
+    videoFile: visualVideo.outputFile,
+    audioFile: voice.outputFile,
+    title: cleanTopic,
+    outputDir: finalDir
+  });
 
   if (!finalVideo.success) {
     return {
@@ -135,39 +143,101 @@ export async function produceFinalShort({
     };
   }
 
+  // --------------------------------------------------
+  // 5. CAPTION GENERATION
+  // --------------------------------------------------
+
+  const estimatedDuration =
+    Math.max(
+      1,
+      Number(visualVideo.sceneCount || visuals.sceneCount || 1) *
+        Number(durationPerScene || 5)
+    );
+
+  const captionTimeline = createCaptionTimeline({
+    text: cleanScript,
+    durationSeconds: estimatedDuration,
+    maxWordsPerCaption: 7
+  });
+
+  if (!captionTimeline.success) {
+    return {
+      success: false,
+      status: "CAPTION_STAGE_FAILED",
+      stage: "CAPTIONS",
+      voice,
+      visuals,
+      visualVideo,
+      finalVideo,
+      captions: captionTimeline
+    };
+  }
+
+  // --------------------------------------------------
+  // 6. SAVE SRT CAPTION FILE
+  // --------------------------------------------------
+
+  const captionFile = await saveSRT(
+    captionTimeline.captions,
+    captionDir,
+    `${finalVideo.id || `caption_${Date.now()}`}.srt`
+  );
+
+  if (!captionFile.success) {
+    return {
+      success: false,
+      status: "CAPTION_SAVE_FAILED",
+      stage: "CAPTIONS",
+      voice,
+      visuals,
+      visualVideo,
+      finalVideo,
+      captions: captionTimeline,
+      captionFile
+    };
+  }
+
+  // --------------------------------------------------
+  // 7. FINAL PRODUCTION RESULT
+  // --------------------------------------------------
+
   return {
     success: true,
     status: "FINAL_SHORT_READY",
-    topic:
-      cleanTopic,
+    topic: cleanTopic,
+
     voice: {
-      outputFile:
-        voice.outputFile,
-      provider:
-        voice.provider
+      outputFile: voice.outputFile,
+      provider: voice.provider
     },
+
     visuals: {
-      sceneCount:
-        visuals.sceneCount,
-      provider:
-        visuals.provider
+      sceneCount: visuals.sceneCount,
+      provider: visuals.provider
     },
+
     visualVideo: {
-      outputFile:
-        visualVideo.outputFile,
-      sceneCount:
-        visualVideo.sceneCount
+      outputFile: visualVideo.outputFile,
+      sceneCount: visualVideo.sceneCount
     },
+
     finalVideo: {
-      outputFile:
-        finalVideo.outputFile,
-      sizeBytes:
-        finalVideo.sizeBytes
+      outputFile: finalVideo.outputFile,
+      sizeBytes: finalVideo.sizeBytes
     },
-    nextStage:
-      "QUALITY_ASSURANCE",
-    createdAt:
-      new Date().toISOString()
+
+    captions: {
+      status: "READY",
+      format: "SRT",
+      outputFile: captionFile.outputFile,
+      sizeBytes: captionFile.sizeBytes,
+      segmentCount: captionTimeline.captions.length,
+      durationSeconds: captionTimeline.durationSeconds
+    },
+
+    nextStage: "QUALITY_ASSURANCE",
+
+    createdAt: new Date().toISOString()
   };
 }
 
@@ -180,16 +250,15 @@ export function getFinalShortProductionStatus() {
       "VOICE",
       "VISUALS",
       "VISUAL_VIDEO",
-      "FINAL_AUDIO_VIDEO_MERGE"
+      "FINAL_AUDIO_VIDEO_MERGE",
+      "CAPTIONS"
     ],
 
-    outputFormat:
-      "MP4",
-
-    resolution:
-      "1080x1920",
+    outputFormat: "MP4",
+    captionFormat: "SRT",
+    resolution: "1080x1920",
 
     message:
-      "Voice and visual assets can be combined into a final YouTube Short."
+      "Voice, visual assets, final MP4 and SRT captions can be generated for a YouTube Short."
   };
 }
