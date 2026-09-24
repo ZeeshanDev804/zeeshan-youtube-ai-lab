@@ -6,8 +6,7 @@ import crypto from "node:crypto";
 
 import { GoogleGenAI } from "@google/genai";
 
-const DEFAULT_OUTPUT_DIR =
-  "./storage/assets";
+const DEFAULT_OUTPUT_DIR = "./storage/assets";
 
 function cleanText(value = "") {
   return String(value)
@@ -42,31 +41,24 @@ function validatePrompt(prompt) {
   if (!cleanPromptValue) {
     return {
       valid: false,
-      error:
-        "Image prompt is required."
+      error: "Image prompt is required."
     };
   }
 
-  if (
-    cleanPromptValue.length > 4000
-  ) {
+  if (cleanPromptValue.length > 4000) {
     return {
       valid: false,
-      error:
-        "Image prompt is too long."
+      error: "Image prompt is too long."
     };
   }
 
   return {
     valid: true,
-    prompt:
-      cleanPromptValue
+    prompt: cleanPromptValue
   };
 }
 
-function validateAspectRatio(
-  aspectRatio
-) {
+function validateAspectRatio(aspectRatio) {
   const allowed = [
     "9:16",
     "16:9",
@@ -75,15 +67,63 @@ function validateAspectRatio(
     "3:4"
   ];
 
-  if (
-    allowed.includes(
-      aspectRatio
-    )
-  ) {
-    return aspectRatio;
+  return allowed.includes(aspectRatio)
+    ? aspectRatio
+    : "9:16";
+}
+
+function findImageData(response) {
+  const candidates =
+    Array.isArray(response?.candidates)
+      ? response.candidates
+      : [];
+
+  for (const candidate of candidates) {
+    const parts =
+      Array.isArray(
+        candidate?.content?.parts
+      )
+        ? candidate.content.parts
+        : [];
+
+    for (const part of parts) {
+      if (
+        part?.inlineData?.data
+      ) {
+        return {
+          data:
+            part.inlineData.data,
+
+          mimeType:
+            part.inlineData.mimeType ||
+            "image/png"
+        };
+      }
+    }
   }
 
-  return "9:16";
+  return null;
+}
+
+function getSafeExtension(mimeType = "") {
+  const normalized =
+    String(mimeType)
+      .toLowerCase()
+      .split(";")[0]
+      .trim();
+
+  if (
+    normalized === "image/jpeg" ||
+    normalized === "image/jpg"
+  ) {
+    return "jpg";
+  }
+
+  if (normalized === "image/webp") {
+    return "webp";
+  }
+
+  return "png";
 }
 
 export function getGeminiImageStatus() {
@@ -91,7 +131,10 @@ export function getGeminiImageStatus() {
     getConfig();
 
   const configured =
-    Boolean(config.apiKey);
+    Boolean(
+      config.apiKey &&
+      config.model
+    );
 
   return {
     configured,
@@ -117,15 +160,19 @@ export function getGeminiImageStatus() {
             : null,
 
     message:
-      "Gemini image generation adapter is ready for API-based image generation."
+      "Gemini image generation adapter uses the Google GenAI generateContent API."
   };
 }
 
 export async function generateGeminiImage({
   prompt,
+
   outputDir =
     DEFAULT_OUTPUT_DIR,
-  aspectRatio = "9:16"
+
+  aspectRatio = "9:16",
+
+  model
 } = {}) {
   const config =
     getConfig();
@@ -157,6 +204,10 @@ export async function generateGeminiImage({
     };
   }
 
+  const finalModel =
+    model ||
+    config.model;
+
   const finalAspectRatio =
     validateAspectRatio(
       aspectRatio
@@ -179,7 +230,7 @@ export async function generateGeminiImage({
     "Create an original visual for a YouTube Short.",
     "Use a vertical 9:16 composition.",
     "Create a professional documentary/editorial visual.",
-    "Use original visual concepts only.",
+    "Use an original visual concept.",
     "Do not include logos or brand marks.",
     "Do not include watermarks.",
     "Do not recreate copyrighted characters.",
@@ -189,67 +240,80 @@ export async function generateGeminiImage({
   ].join(" ");
 
   try {
-    const interaction =
-      await ai.interactions.create({
+    const response =
+      await ai.models.generateContent({
         model:
-          config.model,
+          finalModel,
 
-        input:
+        contents:
           finalPrompt,
 
-        response_format: {
-          type:
-            "image",
+        config: {
+          responseModalities: [
+            "IMAGE"
+          ],
 
-          aspect_ratio:
-            finalAspectRatio
+          responseFormat: {
+            image: {
+              aspectRatio:
+                finalAspectRatio
+            }
+          }
         }
       });
 
-    const generatedImage =
-      interaction?.output_image;
+    const imageData =
+      findImageData(
+        response
+      );
 
-    if (
-      !generatedImage ||
-      !generatedImage.data
-    ) {
+    if (!imageData) {
       return {
         success: false,
 
         status:
           "NO_IMAGE",
 
+        model:
+          finalModel,
+
         error:
-          "Gemini did not return an image."
+          "Gemini did not return image data."
       };
     }
 
     const id =
       createImageId();
 
+    const extension =
+      getSafeExtension(
+        imageData.mimeType
+      );
+
     const outputFile =
       path.resolve(
         outputDir,
-        `${id}.png`
+        `${id}.${extension}`
       );
 
     const buffer =
       Buffer.from(
-        generatedImage.data,
+        imageData.data,
         "base64"
       );
 
-    if (
-      !buffer.length
-    ) {
+    if (!buffer.length) {
       return {
         success: false,
 
         status:
           "EMPTY_IMAGE",
 
+        model:
+          finalModel,
+
         error:
-          "Generated image is empty."
+          "Gemini returned empty image data."
       };
     }
 
@@ -273,6 +337,9 @@ export async function generateGeminiImage({
         status:
           "INVALID_IMAGE_FILE",
 
+        model:
+          finalModel,
+
         error:
           "Generated image file is missing or empty."
       };
@@ -288,14 +355,17 @@ export async function generateGeminiImage({
         "Google Gemini",
 
       model:
-        config.model,
+        finalModel,
 
       id,
 
       outputFile,
 
       format:
-        "png",
+        extension,
+
+      mimeType:
+        imageData.mimeType,
 
       aspectRatio:
         finalAspectRatio,
@@ -314,8 +384,11 @@ export async function generateGeminiImage({
       status:
         "PROVIDER_ERROR",
 
+      provider:
+        "Google Gemini",
+
       model:
-        config.model,
+        finalModel,
 
       error:
         error?.message ||
