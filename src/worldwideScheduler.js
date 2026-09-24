@@ -1,746 +1,1371 @@
 import "dotenv/config";
 
-import {
-  canStartAutomation,
-  reserveDailySlot,
-  getCEOAutomationStatus
-} from "./ceoAutomationGuard.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+
+const STATE_FILE =
+  process.env.CEO_AUTOMATION_STATE_FILE ||
+  "./storage/automation/ceo-control-state.json";
+
+/*
+ * 5 is a DAILY TARGET, not a hard maximum.
+ *
+ * The system may produce fewer or more videos
+ * depending on the number of genuinely good,
+ * safe and eligible topics available.
+ */
+const DAILY_TARGET_VIDEOS = 5;
+
+const MODES = Object.freeze({
+  AUTO: "AUTO",
+  REVIEW: "REVIEW",
+  STOP: "STOP"
+});
+
+const STATUS = Object.freeze({
+  READY: "READY",
+  BLOCKED: "BLOCKED",
+  APPROVAL_REQUIRED: "APPROVAL_REQUIRED",
+  EMERGENCY_STOP: "EMERGENCY_STOP"
+});
 
 
-const MAX_DAILY_VIDEOS = 5;
-
-const SCHEDULE_WINDOW_MINUTES = 15;
-
-const DEFAULT_SCHEDULE = [
-  {
-    region: "USA",
-    timezone: "America/New_York",
-    hours: [9, 13, 18]
-  },
-  {
-    region: "UK",
-    timezone: "Europe/London",
-    hours: [9, 13, 18]
-  },
-  {
-    region: "EUROPE",
-    timezone: "Europe/Paris",
-    hours: [9, 13, 18]
-  }
-];
-
-
-function normalizeRegion(region = "") {
-  return String(region)
-    .trim()
-    .toUpperCase();
+function now() {
+  return new Date().toISOString();
 }
 
 
-function getScheduleForRegion(region) {
-  const normalizedRegion =
-    normalizeRegion(region);
+function todayKey() {
+  return new Date()
+    .toISOString()
+    .slice(0, 10);
+}
 
-  return DEFAULT_SCHEDULE.find(
-    (entry) =>
-      entry.region ===
-      normalizedRegion
+
+function createId(prefix = "id") {
+  return `${prefix}_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+
+function cleanText(value = "") {
+  return String(value)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+async function ensureStorage() {
+  await fs.mkdir(
+    path.dirname(STATE_FILE),
+    {
+      recursive: true
+    }
   );
 }
 
 
-function getLocalParts(
-  timezone,
-  date = new Date()
-) {
-  const formatter =
-    new Intl.DateTimeFormat(
-      "en-US",
-      {
-        timeZone: timezone,
-        hour: "2-digit",
-        minute: "2-digit",
-        weekday: "short",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour12: false
-      }
-    );
-
-  const parts =
-    formatter.formatToParts(date);
-
-  const result = {};
-
-  for (const part of parts) {
-    if (
-      part.type !==
-      "literal"
-    ) {
-      result[part.type] =
-        part.value;
-    }
-  }
-
+function defaultState() {
   return {
-    year:
-      Number(result.year),
+    version: 3,
 
-    month:
-      Number(result.month),
+    mode:
+      MODES.REVIEW,
 
-    day:
-      Number(result.day),
+    emergencyStop:
+      false,
 
-    hour:
-      Number(result.hour),
+    emergencyStopReason:
+      null,
 
-    minute:
-      Number(result.minute),
+    emergencyStopAt:
+      null,
 
-    weekday:
-      result.weekday
+    emergencyStopClearedAt:
+      null,
+
+    daily: {
+      date:
+        todayKey(),
+
+      target:
+        DAILY_TARGET_VIDEOS,
+
+      started:
+        0,
+
+      completed:
+        0
+    },
+
+    approvals: {},
+
+    reservations: {},
+
+    updatedAt:
+      now()
   };
 }
 
 
-function getScheduleDifference(
-  hour,
-  minute,
-  scheduledHour
-) {
-  const currentMinutes =
-    hour * 60 +
-    minute;
+async function readState() {
+  await ensureStorage();
 
-  const scheduledMinutes =
-    scheduledHour * 60;
-
-  return Math.abs(
-    currentMinutes -
-    scheduledMinutes
-  );
-}
-
-
-function isScheduledHour(
-  hour,
-  minute,
-  scheduleHours
-) {
-  if (
-    !Array.isArray(
-      scheduleHours
-    ) ||
-    scheduleHours.length === 0
-  ) {
-    return false;
-  }
-
-  return scheduleHours.some(
-    (scheduledHour) =>
-      getScheduleDifference(
-        hour,
-        minute,
-        scheduledHour
-      ) <
-      SCHEDULE_WINDOW_MINUTES
-  );
-}
-
-
-function getCurrentScheduleSlot(
-  hour,
-  minute,
-  scheduleHours
-) {
-  if (
-    !Array.isArray(
-      scheduleHours
-    )
-  ) {
-    return null;
-  }
-
-  let closestSlot = null;
-
-  let closestDifference =
-    Infinity;
-
-  for (
-    const scheduledHour
-    of scheduleHours
-  ) {
-    const difference =
-      getScheduleDifference(
-        hour,
-        minute,
-        scheduledHour
+  try {
+    const raw =
+      await fs.readFile(
+        STATE_FILE,
+        "utf8"
       );
 
+    const parsed =
+      JSON.parse(raw);
+
     if (
-      difference <
-      SCHEDULE_WINDOW_MINUTES &&
-      difference <
-      closestDifference
+      !parsed ||
+      typeof parsed !== "object"
     ) {
-      closestDifference =
-        difference;
-
-      closestSlot =
-        scheduledHour;
+      return defaultState();
     }
+
+    const base =
+      defaultState();
+
+    const state = {
+      ...base,
+      ...parsed,
+
+      daily: {
+        ...base.daily,
+        ...(parsed.daily || {})
+      },
+
+      approvals:
+        parsed.approvals || {},
+
+      reservations:
+        parsed.reservations || {}
+    };
+
+
+    /*
+     * New day:
+     * reset counters and reservations.
+     */
+
+    if (
+      state.daily.date !==
+      todayKey()
+    ) {
+      state.daily = {
+        date:
+          todayKey(),
+
+        target:
+          DAILY_TARGET_VIDEOS,
+
+        started:
+          0,
+
+        completed:
+          0
+      };
+
+      state.reservations = {};
+    }
+
+
+    /*
+     * Always keep the target
+     * synchronized with configuration.
+     */
+
+    state.daily.target =
+      DAILY_TARGET_VIDEOS;
+
+
+    return state;
+
+  } catch (error) {
+
+    if (
+      error?.code === "ENOENT"
+    ) {
+      return defaultState();
+    }
+
+    throw error;
   }
-
-  return closestSlot;
 }
 
 
-function createScheduleSlotId(
-  region,
-  local,
-  scheduledHour
-) {
-  return [
-    normalizeRegion(region),
-    local.year,
-    String(local.month)
-      .padStart(2, "0"),
-    String(local.day)
-      .padStart(2, "0"),
-    String(scheduledHour)
-      .padStart(2, "0")
-  ].join(":");
-}
+async function writeState(state) {
+  await ensureStorage();
 
+  const nextState = {
+    ...state,
 
-export function getWorldwideSchedule() {
-  return DEFAULT_SCHEDULE.map(
-    (item) => ({
-      region:
-        item.region,
+    version: 3,
 
-      timezone:
-        item.timezone,
+    updatedAt:
+      now()
+  };
 
-      hours: [
-        ...item.hours
-      ],
+  const tempFile =
+    `${STATE_FILE}.tmp`;
 
-      windowMinutes:
-        SCHEDULE_WINDOW_MINUTES,
+  await fs.writeFile(
+    tempFile,
+    JSON.stringify(
+      nextState,
+      null,
+      2
+    ),
+    "utf8"
+  );
 
-      maximumDailyVideos:
-        MAX_DAILY_VIDEOS
-    })
+  await fs.rename(
+    tempFile,
+    STATE_FILE
   );
 }
 
 
-export function getRegionalTime(
-  region,
-  date = new Date()
-) {
-  const item =
-    getScheduleForRegion(
-      region
-    );
+function normalizeMode(mode) {
+  const value =
+    cleanText(mode)
+      .toUpperCase();
 
-  if (!item) {
+  if (
+    Object.values(MODES)
+      .includes(value)
+  ) {
+    return value;
+  }
+
+  return null;
+}
+
+
+function normalizeRisk(risk) {
+  const value =
+    cleanText(
+      risk || "LOW"
+    ).toUpperCase();
+
+  if (
+    [
+      "LOW",
+      "MEDIUM",
+      "HIGH"
+    ].includes(value)
+  ) {
+    return value;
+  }
+
+  return "MEDIUM";
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| MODE CONTROL
+|--------------------------------------------------------------------------
+*/
+
+export async function setAutomationMode(
+  mode
+) {
+  const normalized =
+    normalizeMode(mode);
+
+  if (!normalized) {
     return {
       success: false,
 
       status:
-        "REGION_NOT_FOUND",
+        "INVALID_MODE",
 
-      region:
-        normalizeRegion(
-          region
-        )
+      allowedModes:
+        Object.values(MODES)
     };
   }
 
-  const local =
-    getLocalParts(
-      item.timezone,
-      date
-    );
-
-  const currentSlot =
-    getCurrentScheduleSlot(
-      local.hour,
-      local.minute,
-      item.hours
-    );
-
-  return {
-    success: true,
-
-    region:
-      item.region,
-
-    timezone:
-      item.timezone,
-
-    ...local,
-
-    scheduledHours:
-      [...item.hours],
-
-    currentSlot,
-
-    scheduleSlotId:
-      currentSlot !== null
-        ? createScheduleSlotId(
-            item.region,
-            local,
-            currentSlot
-          )
-        : null
-  };
-}
-
-
-export async function evaluateSchedule({
-  region,
-  date = new Date()
-} = {}) {
-
-  const item =
-    getScheduleForRegion(
-      region
-    );
-
-  if (!item) {
-    return {
-      eligible: false,
-
-      status:
-        "REGION_NOT_FOUND",
-
-      region:
-        normalizeRegion(
-          region
-        )
-    };
-  }
-
-
-  const local =
-    getLocalParts(
-      item.timezone,
-      date
-    );
-
-
-  const currentSlot =
-    getCurrentScheduleSlot(
-      local.hour,
-      local.minute,
-      item.hours
-    );
-
-
-  const scheduled =
-    currentSlot !== null;
-
-
-  const ceo =
-    await getCEOAutomationStatus();
-
-
-  if (
-    ceo?.emergencyStop
-  ) {
-    return {
-      eligible: false,
-
-      status:
-        "EMERGENCY_STOP",
-
-      region:
-        item.region,
-
-      timezone:
-        item.timezone,
-
-      local,
-
-      currentSlot
-    };
-  }
-
-
-  if (
-    ceo?.mode ===
-    "STOP"
-  ) {
-    return {
-      eligible: false,
-
-      status:
-        "AUTOMATION_STOPPED",
-
-      region:
-        item.region,
-
-      timezone:
-        item.timezone,
-
-      local,
-
-      currentSlot
-    };
-  }
-
-
-  const startedToday =
-    Number(
-      ceo?.daily?.started ||
-      0
-    );
-
-
-  if (
-    startedToday >=
-    MAX_DAILY_VIDEOS
-  ) {
-    return {
-      eligible: false,
-
-      status:
-        "DAILY_LIMIT_REACHED",
-
-      region:
-        item.region,
-
-      timezone:
-        item.timezone,
-
-      local,
-
-      currentSlot,
-
-      dailyLimit:
-        MAX_DAILY_VIDEOS,
-
-      startedToday,
-
-      dailyRemaining: 0
-    };
-  }
-
-
-  if (!scheduled) {
-    return {
-      eligible: false,
-
-      status:
-        "OUTSIDE_SCHEDULE",
-
-      region:
-        item.region,
-
-      timezone:
-        item.timezone,
-
-      local,
-
-      currentSlot: null,
-
-      scheduledHours:
-        item.hours,
-
-      windowMinutes:
-        SCHEDULE_WINDOW_MINUTES
-    };
-  }
-
-
-  const gate =
-    await canStartAutomation({
-      requestedVideos: 1
-    });
-
-
-  if (!gate?.allowed) {
-    return {
-      eligible: false,
-
-      status:
-        gate?.status ||
-        "AUTOMATION_GATE_BLOCKED",
-
-      reason:
-        gate?.reason ||
-        "Automation gate rejected the scheduled run.",
-
-      region:
-        item.region,
-
-      timezone:
-        item.timezone,
-
-      local,
-
-      currentSlot
-    };
-  }
-
-
-  return {
-    eligible: true,
-
-    status:
-      "SCHEDULE_READY",
-
-    region:
-      item.region,
-
-    timezone:
-      item.timezone,
-
-    local,
-
-    scheduledHours:
-      [...item.hours],
-
-    currentSlot,
-
-    scheduleSlotId:
-      createScheduleSlotId(
-        item.region,
-        local,
-        currentSlot
-      ),
-
-    windowMinutes:
-      SCHEDULE_WINDOW_MINUTES,
-
-    dailyLimit:
-      MAX_DAILY_VIDEOS,
-
-    dailyStarted:
-      startedToday,
-
-    dailyRemaining:
-      Math.max(
-        0,
-        MAX_DAILY_VIDEOS -
-        startedToday
-      )
-  };
-}
-
-
-export async function reserveScheduledRun({
-  region,
-  date = new Date()
-} = {}) {
-
-  const evaluation =
-    await evaluateSchedule({
-      region,
-      date
-    });
-
-
-  if (
-    !evaluation?.eligible
-  ) {
-    return evaluation;
-  }
-
-
-  /*
-   * Final CEO check before
-   * consuming a production slot.
-   */
-
-  const ceo =
-    await getCEOAutomationStatus();
-
-
-  if (
-    ceo?.emergencyStop
-  ) {
-    return {
-      eligible: false,
-
-      status:
-        "EMERGENCY_STOP",
-
-      region:
-        evaluation.region,
-
-      timezone:
-        evaluation.timezone,
-
-      local:
-        evaluation.local
-    };
-  }
-
-
-  if (
-    ceo?.mode ===
-    "STOP"
-  ) {
-    return {
-      eligible: false,
-
-      status:
-        "AUTOMATION_STOPPED",
-
-      region:
-        evaluation.region,
-
-      timezone:
-        evaluation.timezone,
-
-      local:
-        evaluation.local
-    };
-  }
-
-
-  /*
-   * CEO guard performs the
-   * actual daily reservation.
-   */
-
-  const reservation =
-    await reserveDailySlot();
-
-
-  if (
-    !reservation?.success
-  ) {
-    return {
-      eligible: false,
-
-      status:
-        reservation?.status ||
-        "DAILY_SLOT_RESERVATION_FAILED",
-
-      region:
-        evaluation.region,
-
-      timezone:
-        evaluation.timezone,
-
-      local:
-        evaluation.local,
-
-      currentSlot:
-        evaluation.currentSlot,
-
-      scheduleSlotId:
-        evaluation.scheduleSlotId,
-
-      reservation
-    };
-  }
-
-
-  return {
-    eligible: true,
-
-    status:
-      "SCHEDULE_RESERVED",
-
-    region:
-      evaluation.region,
-
-    timezone:
-      evaluation.timezone,
-
-    local:
-      evaluation.local,
-
-    currentSlot:
-      evaluation.currentSlot,
-
-    scheduleSlotId:
-      evaluation.scheduleSlotId,
-
-    reservation,
-
-    dailyRemaining:
-      Math.max(
-        0,
-        MAX_DAILY_VIDEOS -
-        Number(
-          reservation?.daily?.started ||
-          0
-        )
-      )
-  };
-}
-
-
-export async function getSchedulerStatus() {
-
-  const ceo =
-    await getCEOAutomationStatus();
-
-
-  const startedToday =
-    Number(
-      ceo?.daily?.started ||
-      0
-    );
-
-
-  const completedToday =
-    Number(
-      ceo?.daily?.completed ||
-      0
-    );
-
+  const state =
+    await readState();
+
+  state.mode =
+    normalized;
+
+  await writeState(
+    state
+  );
 
   return {
     success: true,
 
     status:
-      "READY",
-
-    maximumVideosPerDay:
-      MAX_DAILY_VIDEOS,
-
-    scheduleWindowMinutes:
-      SCHEDULE_WINDOW_MINUTES,
+      "MODE_UPDATED",
 
     mode:
-      ceo?.mode,
+      state.mode,
+
+    emergencyStop:
+      state.emergencyStop
+  };
+}
+
+
+export async function getAutomationMode() {
+  const state =
+    await readState();
+
+  return {
+    success: true,
+
+    mode:
+      state.mode,
+
+    emergencyStop:
+      state.emergencyStop
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| EMERGENCY STOP
+|--------------------------------------------------------------------------
+*/
+
+export async function activateEmergencyStop(
+  reason =
+    "CEO emergency stop"
+) {
+  const state =
+    await readState();
+
+  state.emergencyStop =
+    true;
+
+  state.emergencyStopReason =
+    cleanText(reason) ||
+    "CEO emergency stop";
+
+  state.emergencyStopAt =
+    now();
+
+  await writeState(
+    state
+  );
+
+  return {
+    success: true,
+
+    status:
+      STATUS.EMERGENCY_STOP,
+
+    emergencyStop:
+      true,
+
+    reason:
+      state.emergencyStopReason,
+
+    activatedAt:
+      state.emergencyStopAt
+  };
+}
+
+
+export async function clearEmergencyStop() {
+  const state =
+    await readState();
+
+  state.emergencyStop =
+    false;
+
+  state.emergencyStopReason =
+    null;
+
+  state.emergencyStopClearedAt =
+    now();
+
+  await writeState(
+    state
+  );
+
+  return {
+    success: true,
+
+    status:
+      "EMERGENCY_STOP_CLEARED",
+
+    emergencyStop:
+      false
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| AUTOMATION START GATE
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+| There is NO hard daily maximum here.
+|
+| The daily target is informational.
+| The system can continue beyond 5
+| when additional good topics exist.
+|--------------------------------------------------------------------------
+*/
+
+export async function canStartAutomation({
+  requestedVideos = 1
+} = {}) {
+
+  const state =
+    await readState();
+
+  const amount =
+    Math.max(
+      1,
+      Number(
+        requestedVideos
+      ) || 1
+    );
+
+
+  if (
+    state.emergencyStop
+  ) {
+    return {
+      allowed: false,
+
+      status:
+        STATUS.EMERGENCY_STOP,
+
+      reason:
+        state.emergencyStopReason ||
+        "Emergency STOP is active."
+    };
+  }
+
+
+  if (
+    state.mode ===
+    MODES.STOP
+  ) {
+    return {
+      allowed: false,
+
+      status:
+        STATUS.BLOCKED,
+
+      reason:
+        "Automation mode is STOP."
+    };
+  }
+
+
+  const started =
+    Number(
+      state.daily.started || 0
+    );
+
+
+  const target =
+    DAILY_TARGET_VIDEOS;
+
+
+  const targetRemaining =
+    Math.max(
+      0,
+      target - started
+    );
+
+
+  /*
+   * No daily hard maximum.
+   *
+   * More than the target is allowed.
+   */
+
+  return {
+    allowed: true,
+
+    status:
+      STATUS.READY,
+
+    mode:
+      state.mode,
+
+    dailyTarget:
+      target,
+
+    startedToday:
+      started,
+
+    targetRemaining,
+
+    requestedVideos:
+      amount,
+
+    targetReached:
+      started >= target,
+
+    overTarget:
+      Math.max(
+        0,
+        started - target
+      )
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| DAILY SLOT RESERVATION
+|--------------------------------------------------------------------------
+|
+| 5 is NOT a maximum.
+|
+| reservationKey protects against
+| duplicate execution of the SAME
+| schedule slot.
+|--------------------------------------------------------------------------
+*/
+
+export async function reserveDailySlot({
+  reservationKey = null,
+  region = null,
+  runId = null
+} = {}) {
+
+  const state =
+    await readState();
+
+
+  if (
+    state.emergencyStop
+  ) {
+    return {
+      success: false,
+
+      status:
+        STATUS.EMERGENCY_STOP,
+
+      reason:
+        state.emergencyStopReason ||
+        "Emergency STOP is active."
+    };
+  }
+
+
+  if (
+    state.mode ===
+    MODES.STOP
+  ) {
+    return {
+      success: false,
+
+      status:
+        STATUS.BLOCKED,
+
+      reason:
+        "Automation mode is STOP."
+    };
+  }
+
+
+  /*
+   * Same schedule slot:
+   * do not reserve twice.
+   */
+
+  if (
+    reservationKey &&
+    state.reservations[
+      reservationKey
+    ]
+  ) {
+
+    const existing =
+      state.reservations[
+        reservationKey
+      ];
+
+    return {
+      success: true,
+
+      status:
+        "ALREADY_RESERVED",
+
+      slot:
+        existing.slot,
+
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+
+      startedToday:
+        Number(
+          state.daily.started || 0
+        ),
+
+      targetReached:
+        Number(
+          state.daily.started || 0
+        ) >=
+        DAILY_TARGET_VIDEOS,
+
+      reservation:
+        existing
+    };
+  }
+
+
+  /*
+   * No hard daily limit.
+   */
+
+  const nextSlot =
+    Number(
+      state.daily.started || 0
+    ) + 1;
+
+
+  state.daily.started =
+    nextSlot;
+
+
+  const reservation = {
+    reservationId:
+      createId(
+        "reservation"
+      ),
+
+    key:
+      reservationKey,
+
+    slot:
+      nextSlot,
+
+    region:
+      region
+        ? cleanText(region)
+        : null,
+
+    runId:
+      runId
+        ? cleanText(runId)
+        : null,
+
+    reservedAt:
+      now(),
+
+    status:
+      "RESERVED"
+  };
+
+
+  if (
+    reservationKey
+  ) {
+    state.reservations[
+      reservationKey
+    ] =
+      reservation;
+  }
+
+
+  await writeState(
+    state
+  );
+
+
+  return {
+    success: true,
+
+    status:
+      "DAILY_SLOT_RESERVED",
+
+    slot:
+      nextSlot,
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
+
+    startedToday:
+      nextSlot,
+
+    targetReached:
+      nextSlot >=
+      DAILY_TARGET_VIDEOS,
+
+    overTarget:
+      Math.max(
+        0,
+        nextSlot -
+          DAILY_TARGET_VIDEOS
+      ),
+
+    remainingToTarget:
+      Math.max(
+        0,
+        DAILY_TARGET_VIDEOS -
+          nextSlot
+      ),
+
+    reservation
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| VIDEO COMPLETION
+|--------------------------------------------------------------------------
+*/
+
+export async function markVideoCompleted() {
+
+  const state =
+    await readState();
+
+  state.daily.completed =
+    Number(
+      state.daily.completed || 0
+    ) + 1;
+
+  await writeState(
+    state
+  );
+
+  return {
+    success: true,
+
+    status:
+      "VIDEO_COMPLETED",
+
+    completedToday:
+      state.daily.completed,
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| PUBLISH GATE
+|--------------------------------------------------------------------------
+*/
+
+export async function canPublish({
+  risk = "LOW",
+  requiresApproval = false
+} = {}) {
+
+  const state =
+    await readState();
+
+  const normalizedRisk =
+    normalizeRisk(risk);
+
+
+  if (
+    state.emergencyStop
+  ) {
+    return {
+      allowed: false,
+
+      status:
+        STATUS.EMERGENCY_STOP,
+
+      reason:
+        "Emergency STOP is active."
+    };
+  }
+
+
+  if (
+    state.mode ===
+    MODES.STOP
+  ) {
+    return {
+      allowed: false,
+
+      status:
+        STATUS.BLOCKED,
+
+      reason:
+        "Automation mode is STOP."
+    };
+  }
+
+
+  /*
+   * REVIEW mode always requires
+   * CEO approval.
+   */
+
+  if (
+    state.mode ===
+    MODES.REVIEW
+  ) {
+    return {
+      allowed: false,
+
+      status:
+        STATUS.APPROVAL_REQUIRED,
+
+      reason:
+        "REVIEW mode requires CEO approval.",
+
+      mode:
+        state.mode,
+
+      risk:
+        normalizedRisk
+    };
+  }
+
+
+  /*
+   * MEDIUM and HIGH risk always
+   * require CEO approval.
+   */
+
+  if (
+    normalizedRisk === "MEDIUM" ||
+    normalizedRisk === "HIGH"
+  ) {
+    return {
+      allowed: false,
+
+      status:
+        STATUS.APPROVAL_REQUIRED,
+
+      reason:
+        `${normalizedRisk} risk requires CEO approval.`,
+
+      mode:
+        state.mode,
+
+      risk:
+        normalizedRisk
+    };
+  }
+
+
+  if (
+    requiresApproval
+  ) {
+    return {
+      allowed: false,
+
+      status:
+        STATUS.APPROVAL_REQUIRED,
+
+      reason:
+        "This job explicitly requires CEO approval."
+    };
+  }
+
+
+  return {
+    allowed: true,
+
+    status:
+      STATUS.READY,
+
+    mode:
+      state.mode,
+
+    risk:
+      normalizedRisk
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| CEO APPROVAL
+|--------------------------------------------------------------------------
+*/
+
+export async function createApprovalRequest({
+  runId,
+  reason = "",
+  risk = "MEDIUM",
+  metadata = {}
+} = {}) {
+
+  const state =
+    await readState();
+
+  const approvalId =
+    createId(
+      "approval"
+    );
+
+
+  const request = {
+    approvalId,
+
+    runId:
+      runId || null,
+
+    reason:
+      cleanText(reason),
+
+    risk:
+      normalizeRisk(risk),
+
+    status:
+      "PENDING",
+
+    createdAt:
+      now(),
+
+    decidedAt:
+      null,
+
+    metadata:
+      metadata || {}
+  };
+
+
+  state.approvals[
+    approvalId
+  ] =
+    request;
+
+
+  await writeState(
+    state
+  );
+
+
+  return {
+    success: true,
+
+    status:
+      "APPROVAL_CREATED",
+
+    request
+  };
+}
+
+
+export async function decideApproval({
+  approvalId,
+  decision,
+  note = ""
+} = {}) {
+
+  const state =
+    await readState();
+
+  const id =
+    cleanText(
+      approvalId
+    );
+
+
+  const request =
+    state.approvals[id];
+
+
+  if (!request) {
+    return {
+      success: false,
+
+      status:
+        "APPROVAL_NOT_FOUND"
+    };
+  }
+
+
+  const normalized =
+    cleanText(decision)
+      .toUpperCase();
+
+
+  if (
+    ![
+      "APPROVED",
+      "REJECTED"
+    ].includes(normalized)
+  ) {
+    return {
+      success: false,
+
+      status:
+        "INVALID_DECISION"
+    };
+  }
+
+
+  request.status =
+    normalized;
+
+  request.note =
+    cleanText(note);
+
+  request.decidedAt =
+    now();
+
+
+  state.approvals[id] =
+    request;
+
+
+  await writeState(
+    state
+  );
+
+
+  return {
+    success: true,
+
+    status:
+      "APPROVAL_UPDATED",
+
+    request
+  };
+}
+
+
+export async function getApprovalRequest(
+  approvalId
+) {
+
+  const state =
+    await readState();
+
+  const id =
+    cleanText(
+      approvalId
+    );
+
+
+  if (!id) {
+    return {
+      success: false,
+
+      status:
+        "INVALID_APPROVAL_ID"
+    };
+  }
+
+
+  const request =
+    state.approvals[id];
+
+
+  if (!request) {
+    return {
+      success: false,
+
+      status:
+        "APPROVAL_NOT_FOUND"
+    };
+  }
+
+
+  return {
+    success: true,
+
+    status:
+      "APPROVAL_FOUND",
+
+    request
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| CEO STATUS
+|--------------------------------------------------------------------------
+*/
+
+export async function getCEOAutomationStatus() {
+
+  const state =
+    await readState();
+
+
+  const approvals =
+    Object.values(
+      state.approvals
+    );
+
+
+  const started =
+    Number(
+      state.daily.started || 0
+    );
+
+
+  const completed =
+    Number(
+      state.daily.completed || 0
+    );
+
+
+  return {
+    success: true,
+
+    version:
+      state.version,
+
+    mode:
+      state.mode,
 
     emergencyStop:
       Boolean(
-        ceo?.emergencyStop
+        state.emergencyStop
       ),
 
-    startedToday,
+    emergencyStopReason:
+      state.emergencyStopReason ||
+      null,
 
-    completedToday,
+    emergencyStopAt:
+      state.emergencyStopAt ||
+      null,
 
-    remainingToday:
-      Math.max(
-        0,
-        MAX_DAILY_VIDEOS -
-        startedToday
-      ),
+    daily: {
 
-    regions:
-      getWorldwideSchedule()
+      date:
+        state.daily.date,
+
+      /*
+       * 5 is the target.
+       * There is no hard maximum.
+       */
+
+      target:
+        DAILY_TARGET_VIDEOS,
+
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+
+      started,
+
+      used:
+        started,
+
+      completed,
+
+      targetReached:
+        started >=
+        DAILY_TARGET_VIDEOS,
+
+      overTarget:
+        Math.max(
+          0,
+          started -
+            DAILY_TARGET_VIDEOS
+        ),
+
+      remainingToTarget:
+        Math.max(
+          0,
+          DAILY_TARGET_VIDEOS -
+            started
+        ),
+
+      maximum:
+        null,
+
+      maximumVideosPerDay:
+        null
+    },
+
+
+    approvals: {
+      total:
+        approvals.length,
+
+      pending:
+        approvals.filter(
+          (item) =>
+            item.status ===
+            "PENDING"
+        ).length,
+
+      approved:
+        approvals.filter(
+          (item) =>
+            item.status ===
+            "APPROVED"
+        ).length,
+
+      rejected:
+        approvals.filter(
+          (item) =>
+            item.status ===
+            "REJECTED"
+        ).length
+    },
+
+
+    safetyRules: {
+
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+
+      hardDailyMaximum:
+        false,
+
+      moreThanTargetAllowed:
+        true,
+
+      fewerThanTargetAllowed:
+        true,
+
+      mediumRiskNeedsApproval:
+        true,
+
+      highRiskNeedsApproval:
+        true,
+
+      reviewModeNeedsApproval:
+        true,
+
+      stopBlocksNewAutomation:
+        true,
+
+      emergencyStopBlocksAutomation:
+        true,
+
+      duplicateReservationProtection:
+        true,
+
+      qualityOverQuantity:
+        true
+    },
+
+
+    storage: {
+      stateFile:
+        STATE_FILE
+    }
   };
 }
 
 
+/*
+|--------------------------------------------------------------------------
+| RESET DAILY COUNTER
+|--------------------------------------------------------------------------
+*/
+
+export async function resetDailyCounter() {
+
+  const state =
+    await readState();
+
+
+  state.daily = {
+    date:
+      todayKey(),
+
+    target:
+      DAILY_TARGET_VIDEOS,
+
+    started:
+      0,
+
+    completed:
+      0
+  };
+
+
+  state.reservations =
+    {};
+
+
+  await writeState(
+    state
+  );
+
+
+  return {
+    success: true,
+
+    status:
+      "DAILY_COUNTER_RESET",
+
+    date:
+      state.daily.date,
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| GUARD STATUS
+|--------------------------------------------------------------------------
+*/
+
+export async function getCEOAutomationGuardStatus() {
+
+  const status =
+    await getCEOAutomationStatus();
+
+
+  return {
+    ...status,
+
+    configured:
+      true,
+
+    status:
+      status.emergencyStop
+        ? STATUS.EMERGENCY_STOP
+        : status.mode ===
+          MODES.STOP
+          ? STATUS.BLOCKED
+          : STATUS.READY
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| DEFAULT EXPORT
+|--------------------------------------------------------------------------
+*/
+
 export default {
-  getWorldwideSchedule,
-  getRegionalTime,
-  evaluateSchedule,
-  reserveScheduledRun,
-  getSchedulerStatus
+
+  setAutomationMode,
+  getAutomationMode,
+
+  activateEmergencyStop,
+  clearEmergencyStop,
+
+  canStartAutomation,
+  reserveDailySlot,
+  markVideoCompleted,
+
+  canPublish,
+
+  createApprovalRequest,
+  decideApproval,
+  getApprovalRequest,
+
+  getCEOAutomationStatus,
+  getCEOAutomationGuardStatus,
+
+  resetDailyCounter
 };
