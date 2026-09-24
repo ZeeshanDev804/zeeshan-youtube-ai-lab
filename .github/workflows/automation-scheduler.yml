@@ -2,8 +2,7 @@ name: ZEESHAN AI LABS - Automation Scheduler
 
 on:
   schedule:
-    # Frequent checks allow worldwide schedule windows
-    # to be detected without creating a hard daily video limit.
+    # Check every 15 minutes for worldwide schedule windows.
     - cron: "*/15 * * * *"
 
   workflow_dispatch:
@@ -44,7 +43,6 @@ jobs:
 
     timeout-minutes: 30
 
-
     steps:
 
       # ------------------------------------------------------------
@@ -58,18 +56,17 @@ jobs:
 
 
       # ------------------------------------------------------------
-      # NODE
+      # NODE.JS
       # ------------------------------------------------------------
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
 
       # ------------------------------------------------------------
-      # INSTALL
+      # INSTALL DEPENDENCIES
       # ------------------------------------------------------------
 
       - name: Install dependencies
@@ -77,7 +74,7 @@ jobs:
 
 
       # ------------------------------------------------------------
-      # ENVIRONMENT
+      # ENVIRONMENT CHECK
       # ------------------------------------------------------------
 
       - name: Prepare automation environment
@@ -125,7 +122,7 @@ jobs:
 
 
       # ------------------------------------------------------------
-      # RUN AUTOMATION
+      # RUN WORLDWIDE AUTOMATION
       # ------------------------------------------------------------
 
       - name: Run worldwide automation
@@ -144,6 +141,7 @@ jobs:
 
           INPUT_REGION: ${{ github.event.inputs.region }}
           INPUT_EXECUTE: ${{ github.event.inputs.execute }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
 
         run: |
           node --input-type=module <<'NODE'
@@ -155,20 +153,46 @@ jobs:
           } from "./src/scheduledAutomationRunner.js";
 
 
-          const region =
-            process.env.INPUT_REGION || "ALL";
+          const eventName =
+            process.env.GITHUB_EVENT_NAME || "";
 
 
-          const execute =
-            String(
-              process.env.INPUT_EXECUTE || "false"
-            ).toLowerCase() === "true";
+          let region;
+          let execute;
+
+
+          /*
+           * Scheduled GitHub Actions runs do not have
+           * workflow_dispatch inputs.
+           *
+           * Therefore scheduled runs must execute
+           * automatically instead of falling back
+           * to preview mode.
+           */
+
+          if (eventName === "schedule") {
+
+            region = "ALL";
+
+            execute = true;
+
+          } else {
+
+            region =
+              process.env.INPUT_REGION || "ALL";
+
+            execute =
+              String(
+                process.env.INPUT_EXECUTE || "false"
+              ).toLowerCase() === "true";
+          }
 
 
           console.log("");
           console.log("==============================================");
           console.log(" ZEESHAN AI LABS - AUTOMATION SCHEDULER");
           console.log("==============================================");
+          console.log("GitHub event:", eventName);
           console.log("Region:", region);
           console.log("Execute:", execute);
           console.log("Daily target: 5");
@@ -178,7 +202,8 @@ jobs:
           console.log("EUROPE: ENABLED");
           console.log("MIDDLE EAST: ENABLED");
           console.log("More than 5 allowed when strong topics exist.");
-          console.log("Weak/risky topics must not be generated just to hit target.");
+          console.log("Weak topics must not be forced.");
+          console.log("Risky topics must go through approval.");
           console.log("==============================================");
           console.log("");
 
@@ -189,7 +214,7 @@ jobs:
           if (!execute) {
 
             console.log(
-              "Preview mode - no content will be generated or published."
+              "Preview mode - no automation execution."
             );
 
             result =
@@ -199,10 +224,18 @@ jobs:
 
           } else if (region === "ALL") {
 
+            console.log(
+              "Executing worldwide scheduled automation..."
+            );
+
             result =
               await runScheduledAutomation();
 
           } else {
+
+            console.log(
+              `Executing scheduled automation for ${region}...`
+            );
 
             result =
               await runScheduledRegion({
@@ -240,16 +273,26 @@ jobs:
       - name: Persist automation state
         if: always()
         run: |
+
           mkdir -p storage/automation
 
-          git config user.name "ZEESHAN AI LABS Automation"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name \
+            "ZEESHAN AI LABS Automation"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add storage/automation
 
           if git diff --cached --quiet; then
+
             echo "No automation state changes to commit."
+
           else
-            git commit -m "chore: persist automation state"
+
+            git commit \
+              -m "chore: persist automation state"
+
             git push
+
           fi
