@@ -45,41 +45,67 @@ function createReviewRequest({
   return createCEOApprovalRequest({
     action:
       "YOUTUBE_PUBLISH",
+
+    riskLevel,
+
     reason:
       reason ||
       `${riskLevel} risk content requires CEO review.`
   });
 }
 
+function createBlockedDecision({
+  status,
+  riskLevel = null,
+  reason,
+  approvalRequired = false
+}) {
+  return {
+    success: false,
+    status,
+    allowed: false,
+    approvalRequired,
+    riskLevel,
+    reason
+  };
+}
+
 export function evaluateYouTubePublish({
   uploadJob,
-  riskLevel = "LOW",
-  requiresCEOApproval = true
+  riskLevel = "LOW"
 } = {}) {
   const system =
     getSystemStatus();
 
   /*
-   * HARD STOP
-   *
-   * Emergency Stop / STOP mode must
-   * always block publishing.
+   * ------------------------------------------------
+   * 1. HARD STOP
+   * ------------------------------------------------
    */
+
   if (
     isEmergencyStopActive(
       system
     )
   ) {
-    return {
-      success: false,
+    return createBlockedDecision({
       status:
-        "EMERGENCY_STOP",
-      allowed: false,
-      approvalRequired: false,
+        system.mode === "STOP"
+          ? "SYSTEM_STOP"
+          : "EMERGENCY_STOP",
+
       reason:
-        "CEO Emergency Stop is active."
-    };
+        system.mode === "STOP"
+          ? "System mode is STOP."
+          : "CEO Emergency Stop is active."
+    });
   }
+
+  /*
+   * ------------------------------------------------
+   * 2. RISK VALIDATION
+   * ------------------------------------------------
+   */
 
   const normalizedRisk =
     normalizeRisk(
@@ -87,179 +113,234 @@ export function evaluateYouTubePublish({
     );
 
   if (!normalizedRisk) {
-    return {
-      success: false,
+    return createBlockedDecision({
       status:
         "INVALID_RISK",
-      allowed: false,
-      approvalRequired: false,
+
       reason:
         "Invalid risk level."
-    };
+    });
   }
 
   /*
-   * Upload Guard
+   * ------------------------------------------------
+   * 3. UPLOAD GUARD
+   * ------------------------------------------------
    *
-   * The upload job must already contain
-   * the required production/QA/media checks.
+   * Upload Guard handles:
+   * - final video
+   * - QA
+   * - duplicate
+   * - copyright
+   * - metadata
+   * - technical upload checks
+   *
+   * Final CEO publishing decision remains here.
    */
+
   const uploadCheck =
     canUploadToYouTube(
       uploadJob
     );
 
   if (!uploadCheck.allowed) {
-    return {
-      success: false,
+    return createBlockedDecision({
       status:
         "UPLOAD_GUARD_BLOCKED",
-      allowed: false,
-      approvalRequired: false,
+
+      riskLevel:
+        normalizedRisk,
+
       reason:
         uploadCheck.reason
-    };
+    });
   }
 
   /*
-   * HIGH RISK
+   * ------------------------------------------------
+   * 4. HIGH RISK
+   * ------------------------------------------------
    *
-   * High-risk content is NOT auto-published.
-   * It goes into CEO review.
+   * HIGH risk is never automatic.
+   * It goes to CEO review.
    */
+
   if (
     normalizedRisk === "HIGH"
   ) {
+    const approval =
+      createReviewRequest({
+        riskLevel:
+          normalizedRisk,
+
+        reason:
+          "High-risk content requires explicit CEO review before publishing."
+      });
+
     return {
       success: false,
+
       status:
         "HIGH_RISK_CEO_REVIEW",
+
       allowed: false,
+
       approvalRequired: true,
+
       riskLevel:
         normalizedRisk,
-      approval:
-        createReviewRequest({
-          riskLevel:
-            normalizedRisk,
-          reason:
-            "High-risk content requires explicit CEO review before publishing."
-        })
+
+      approval,
+
+      nextStage:
+        "CEO_REVIEW"
     };
   }
 
   /*
-   * MEDIUM RISK
+   * ------------------------------------------------
+   * 5. MEDIUM RISK
+   * ------------------------------------------------
    *
-   * Medium-risk content also requires
-   * explicit CEO approval.
+   * MEDIUM risk is never automatic.
+   * It goes to CEO review.
    */
+
   if (
     normalizedRisk === "MEDIUM"
   ) {
+    const approval =
+      createReviewRequest({
+        riskLevel:
+          normalizedRisk,
+
+        reason:
+          "Medium-risk content requires CEO review before publishing."
+      });
+
     return {
       success: false,
+
       status:
         "CEO_REVIEW_REQUIRED",
+
       allowed: false,
+
       approvalRequired: true,
+
       riskLevel:
         normalizedRisk,
-      approval:
-        createReviewRequest({
-          riskLevel:
-            normalizedRisk,
-          reason:
-            "Medium-risk content requires CEO review before publishing."
-        })
+
+      approval,
+
+      nextStage:
+        "CEO_REVIEW"
     };
   }
 
   /*
-   * LOW RISK
+   * ------------------------------------------------
+   * 6. LOW RISK
+   * ------------------------------------------------
    *
-   * If CEO approval is explicitly required,
-   * create an approval request.
+   * LOW risk can auto-publish only when
+   * ceoControl.js explicitly allows it.
+   *
+   * AUTO mode + low-risk policy = allowed.
+   *
+   * REVIEW mode = CEO review.
    */
-  if (
-    requiresCEOApproval === true
-  ) {
-    return {
-      success: false,
-      status:
-        "CEO_REVIEW_REQUIRED",
-      allowed: false,
-      approvalRequired: true,
-      riskLevel:
-        normalizedRisk,
-      approval:
-        createCEOApprovalRequest({
-          action:
-            "YOUTUBE_PUBLISH",
-          reason:
-            "CEO approval is required before publishing."
-        })
-    };
-  }
 
-  /*
-   * LOW-RISK AUTO PUBLISH
-   */
   const autoPublish =
     canAutoPublish(
       "LOW"
     );
 
   if (
-    !autoPublish.allowed
+    autoPublish.allowed
   ) {
     return {
-      success: false,
+      success: true,
+
       status:
-        "AUTO_PUBLISH_NOT_AUTHORIZED",
-      allowed: false,
+        "PUBLISH_AUTHORIZED",
+
+      allowed: true,
+
       approvalRequired: false,
+
       riskLevel:
-        normalizedRisk,
+        "LOW",
+
+      authorization:
+        "CEO_AUTO_PUBLISH_POLICY",
+
       reason:
-        autoPublish.reason
+        autoPublish.reason,
+
+      nextStage:
+        "YOUTUBE_OAUTH_UPLOAD",
+
+      authorizedAt:
+        new Date().toISOString()
     };
   }
 
   /*
-   * Final authorization
+   * ------------------------------------------------
+   * 7. LOW RISK BUT CEO REVIEW REQUIRED
+   * ------------------------------------------------
    */
+
+  const approval =
+    createCEOApprovalRequest({
+      action:
+        "YOUTUBE_PUBLISH",
+
+      riskLevel:
+        "LOW",
+
+      reason:
+        autoPublish.reason ||
+        "Low-risk content requires CEO approval in the current system mode."
+    });
+
   return {
-    success: true,
+    success: false,
+
     status:
-      "PUBLISH_AUTHORIZED",
-    allowed: true,
-    approvalRequired: false,
+      "CEO_REVIEW_REQUIRED",
+
+    allowed: false,
+
+    approvalRequired: true,
+
     riskLevel:
-      normalizedRisk,
-    authorization:
-      "CEO_AUTO_PUBLISH_POLICY",
-    authorizedAt:
-      new Date().toISOString()
+      "LOW",
+
+    approval,
+
+    nextStage:
+      "CEO_REVIEW"
   };
 }
 
 export function createPublishDecision({
   uploadJob,
-  riskLevel = "LOW",
-  requiresCEOApproval = true
+  riskLevel = "LOW"
 } = {}) {
   const decision =
     evaluateYouTubePublish({
       uploadJob,
-      riskLevel,
-      requiresCEOApproval
+      riskLevel
     });
 
   return {
     ...decision,
+
     action:
       "YOUTUBE_PUBLISH",
+
     createdAt:
       new Date().toISOString()
   };
@@ -271,8 +352,10 @@ export function getYouTubePublishGateStatus() {
 
   return {
     configured: true,
+
     status:
       "READY",
+
     currentMode:
       system.mode,
 
@@ -284,13 +367,17 @@ export function getYouTubePublishGateStatus() {
 
     policy: {
       lowRisk:
-        "AUTO_POLICY_OR_CEO_REVIEW",
+        "AUTO when CEO low-risk policy allows; otherwise CEO review",
+
       mediumRisk:
         "CEO_REVIEW",
+
       highRisk:
         "CEO_REVIEW",
+
       stopMode:
         "BLOCKED",
+
       emergencyStop:
         "BLOCKED"
     },
@@ -298,7 +385,13 @@ export function getYouTubePublishGateStatus() {
     emergencyStop:
       system.emergencyStop === true,
 
+    dailyTargetVideos:
+      system.dailyTargetVideos,
+
+    hardDailyMaximum:
+      system.hardDailyMaximum === true,
+
     message:
-      "YouTube publishing is protected by upload authorization, risk review, CEO approval, and emergency-stop gates."
+      "YouTube publishing is protected by upload authorization, risk review, CEO approval, and Emergency Stop."
   };
 }
