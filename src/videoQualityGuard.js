@@ -2,22 +2,37 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
+const DEFAULT_MIN_SECONDS = 20;
+const DEFAULT_MAX_SECONDS = 59;
+const DEFAULT_WIDTH = 1080;
+const DEFAULT_HEIGHT = 1920;
+
+const REQUIRED_FORMAT = "mp4";
+const REQUIRED_VIDEO_CODEC = "h264";
+const REQUIRED_AUDIO_CODEC = "aac";
+
 function runFFprobe(args = []) {
   return new Promise((resolve) => {
-    const process = spawn(
-      "ffprobe",
-      args,
-      {
-        stdio: [
-          "ignore",
-          "pipe",
-          "pipe"
-        ]
-      }
-    );
+    const process = spawn("ffprobe", args, {
+      stdio: [
+        "ignore",
+        "pipe",
+        "pipe"
+      ]
+    });
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
+
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve(result);
+    };
 
     process.stdout.on(
       "data",
@@ -36,11 +51,13 @@ function runFFprobe(args = []) {
     process.on(
       "error",
       (error) => {
-        resolve({
+        finish({
           success: false,
           error:
             error?.message ||
-            "FFprobe could not start."
+            "FFprobe could not start.",
+          stdout,
+          stderr
         });
       }
     );
@@ -48,7 +65,7 @@ function runFFprobe(args = []) {
     process.on(
       "close",
       (code) => {
-        resolve({
+        finish({
           success: code === 0,
           code,
           stdout,
@@ -60,12 +77,63 @@ function runFFprobe(args = []) {
 }
 
 function numberValue(value) {
-  const number =
-    Number(value);
+  const number = Number(value);
 
   return Number.isFinite(number)
     ? number
     : null;
+}
+
+function cleanFormat(format = "") {
+  return String(format)
+    .split(",")
+    .map((value) =>
+      value.trim().toLowerCase()
+    )
+    .filter(Boolean);
+}
+
+function hasFormat(
+  format,
+  requiredFormat
+) {
+  return cleanFormat(format).includes(
+    String(requiredFormat).toLowerCase()
+  );
+}
+
+async function getFileStats(filePath) {
+  try {
+    const stats =
+      await fs.stat(filePath);
+
+    if (!stats.isFile()) {
+      return {
+        valid: false,
+        error:
+          "Video path does not point to a file."
+      };
+    }
+
+    if (stats.size === 0) {
+      return {
+        valid: false,
+        error:
+          "Video file is empty."
+      };
+    }
+
+    return {
+      valid: true,
+      sizeBytes: stats.size
+    };
+  } catch {
+    return {
+      valid: false,
+      error:
+        "Video file does not exist."
+    };
+  }
 }
 
 export async function inspectVideo(
@@ -86,29 +154,21 @@ export async function inspectVideo(
   const absolutePath =
     path.resolve(filePath);
 
-  try {
-    const stats =
-      await fs.stat(
-        absolutePath
-      );
+  const fileCheck =
+    await getFileStats(
+      absolutePath
+    );
 
-    if (
-      !stats.isFile() ||
-      stats.size === 0
-    ) {
-      return {
-        success: false,
-        status: "INVALID",
-        error:
-          "Video file is empty or invalid."
-      };
-    }
-  } catch {
+  if (!fileCheck.valid) {
     return {
       success: false,
-      status: "NOT_FOUND",
-      error:
+      status:
+        fileCheck.error ===
         "Video file does not exist."
+          ? "NOT_FOUND"
+          : "INVALID",
+      error:
+        fileCheck.error
     };
   }
 
@@ -183,50 +243,74 @@ export async function inspectVideo(
   return {
     success: true,
     status: "INSPECTED",
-    file: absolutePath,
+
+    file:
+      absolutePath,
+
     sizeBytes:
-      (await fs.stat(
-        absolutePath
-      )).size,
+      fileCheck.sizeBytes,
+
     durationSeconds:
       duration,
+
     format:
       data.format?.format_name ||
       null,
-    video: videoStream
-      ? {
-          codec:
-            videoStream.codec_name ||
-            null,
-          width:
-            numberValue(
-              videoStream.width
-            ),
-          height:
-            numberValue(
-              videoStream.height
-            ),
-          frameRate:
-            videoStream.r_frame_rate ||
-            null
-        }
-      : null,
-    audio: audioStream
-      ? {
-          codec:
-            audioStream.codec_name ||
-            null
-        }
-      : null
+
+    video:
+      videoStream
+        ? {
+            codec:
+              videoStream.codec_name ||
+              null,
+
+            width:
+              numberValue(
+                videoStream.width
+              ),
+
+            height:
+              numberValue(
+                videoStream.height
+              ),
+
+            frameRate:
+              videoStream.r_frame_rate ||
+              null
+          }
+        : null,
+
+    audio:
+      audioStream
+        ? {
+            codec:
+              audioStream.codec_name ||
+              null
+          }
+        : null
   };
 }
 
 export async function runVideoQualityCheck({
   filePath,
-  minSeconds = 20,
-  maxSeconds = 59,
-  requiredWidth = 1080,
-  requiredHeight = 1920
+
+  minSeconds =
+    DEFAULT_MIN_SECONDS,
+
+  maxSeconds =
+    DEFAULT_MAX_SECONDS,
+
+  requiredWidth =
+    DEFAULT_WIDTH,
+
+  requiredHeight =
+    DEFAULT_HEIGHT,
+
+  requireMp4 = true,
+
+  requireH264 = true,
+
+  requireAac = true
 } = {}) {
   const inspection =
     await inspectVideo(
@@ -238,9 +322,12 @@ export async function runVideoQualityCheck({
       success: false,
       status: "QA_FAILED",
       passed: false,
+
       errors: [
         inspection.error
-      ]
+      ],
+
+      warnings: []
     };
   }
 
@@ -250,9 +337,7 @@ export async function runVideoQualityCheck({
   const duration =
     inspection.durationSeconds;
 
-  if (
-    duration === null
-  ) {
+  if (duration === null) {
     errors.push(
       "Video duration could not be detected."
     );
@@ -298,8 +383,43 @@ export async function runVideoQualityCheck({
   }
 
   if (
+    requireMp4 &&
+    !hasFormat(
+      inspection.format,
+      REQUIRED_FORMAT
+    )
+  ) {
+    errors.push(
+      "Final video container must be MP4."
+    );
+  }
+
+  if (
+    requireH264 &&
     inspection.video?.codec !==
-    "h264"
+      REQUIRED_VIDEO_CODEC
+  ) {
+    errors.push(
+      "Video codec must be H.264."
+    );
+  }
+
+  if (
+    requireAac &&
+    inspection.audio &&
+    inspection.audio.codec !==
+      REQUIRED_AUDIO_CODEC
+  ) {
+    errors.push(
+      "Audio codec must be AAC."
+    );
+  }
+
+  if (
+    !requireH264 &&
+    inspection.video &&
+    inspection.video.codec !==
+      REQUIRED_VIDEO_CODEC
   ) {
     warnings.push(
       "Video codec is not H.264."
@@ -307,9 +427,10 @@ export async function runVideoQualityCheck({
   }
 
   if (
+    !requireAac &&
     inspection.audio &&
     inspection.audio.codec !==
-      "aac"
+      REQUIRED_AUDIO_CODEC
   ) {
     warnings.push(
       "Audio codec is not AAC."
@@ -321,14 +442,40 @@ export async function runVideoQualityCheck({
 
   return {
     success: true,
+
     status:
       passed
         ? "QA_PASS"
         : "QA_FAILED",
+
     passed,
+
     errors,
+
     warnings,
+
     inspection,
+
+    requirements: {
+      minSeconds,
+      maxSeconds,
+
+      width:
+        requiredWidth,
+
+      height:
+        requiredHeight,
+
+      mp4Required:
+        requireMp4,
+
+      h264Required:
+        requireH264,
+
+      aacRequired:
+        requireAac
+    },
+
     checkedAt:
       new Date().toISOString()
   };
@@ -337,18 +484,45 @@ export async function runVideoQualityCheck({
 export function getVideoQualityGuardStatus() {
   return {
     configured: true,
+
     status: "READY",
+
+    requirements: {
+      format:
+        REQUIRED_FORMAT.toUpperCase(),
+
+      videoCodec:
+        REQUIRED_VIDEO_CODEC.toUpperCase(),
+
+      audioCodec:
+        REQUIRED_AUDIO_CODEC.toUpperCase(),
+
+      resolution:
+        `${DEFAULT_WIDTH}x${DEFAULT_HEIGHT}`,
+
+      duration:
+        `${DEFAULT_MIN_SECONDS}-${DEFAULT_MAX_SECONDS} seconds`
+    },
+
     checks: [
       "file exists",
       "file is not empty",
+      "MP4 container",
       "duration 20-59 seconds",
       "1080x1920 resolution",
       "video stream",
       "audio stream",
-      "H.264 warning",
-      "AAC warning"
+      "H.264 video codec",
+      "AAC audio codec"
     ],
+
     message:
-      "Final video quality guard is ready."
+      "Final video quality guard enforces the required YouTube Shorts media specification."
   };
 }
+
+export default {
+  inspectVideo,
+  runVideoQualityCheck,
+  getVideoQualityGuardStatus
+};
