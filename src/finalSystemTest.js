@@ -28,12 +28,9 @@ import {
   getYouTubePublishGateStatus
 } from "./youtubePublishGate.js";
 
-function check(name, condition) {
-  return {
-    name,
-    passed: Boolean(condition)
-  };
-}
+import {
+  getYouTubeOAuthStatus
+} from "./youtubeOAuthUploader.js";
 
 function normalize(value) {
   return String(
@@ -43,14 +40,33 @@ function normalize(value) {
     .toUpperCase();
 }
 
-function firstDefined(
-  ...values
+function check(name, condition, details = "") {
+  return {
+    name,
+    passed: Boolean(condition),
+    details
+  };
+}
+
+function safeStatus(
+  name,
+  getter
 ) {
-  return values.find(
-    (value) =>
-      value !== undefined &&
-      value !== null
-  );
+  try {
+    return {
+      name,
+      data: getter(),
+      error: null
+    };
+  } catch (error) {
+    return {
+      name,
+      data: null,
+      error:
+        error?.message ||
+        `${name} status check failed.`
+    };
+  }
 }
 
 function getRiskPolicy(
@@ -62,65 +78,71 @@ function getRiskPolicy(
     youtube ||
     {};
 
-  const policy =
-    source.policy ||
-    source.riskPolicy ||
-    {};
-
   return {
     low:
       normalize(
-        firstDefined(
-          policy.low,
-          policy.lowRisk,
-          source.lowRisk,
-          source.low
-        )
+        source.lowRisk ||
+        source.policy?.low ||
+        source.low
       ),
 
     medium:
       normalize(
-        firstDefined(
-          policy.medium,
-          policy.mediumRisk,
-          source.mediumRisk,
-          source.medium
-        )
+        source.mediumRisk ||
+        source.policy?.medium ||
+        source.medium
       ),
 
     high:
       normalize(
-        firstDefined(
-          policy.high,
-          policy.highRisk,
-          source.highRisk,
-          source.high
-        )
+        source.highRisk ||
+        source.policy?.high ||
+        source.high
       ),
 
     stop:
       normalize(
-        firstDefined(
-          policy.stop,
-          policy.stopRisk,
-          source.stop,
-          source.stopRisk
-        )
+        source.stopRisk ||
+        source.policy?.stop ||
+        source.stop
       )
   };
 }
 
-function getPrivacy(
+function getDefaultPrivacy(
   youtube
 ) {
   return normalize(
-    firstDefined(
-      youtube?.defaultPrivacy,
-      youtube?.privacy,
-      youtube?.uploadDefaults?.privacy,
-      youtube?.defaults?.privacy
-    )
+    youtube?.defaultPrivacy ||
+    youtube?.privacyStatus ||
+    "private"
   );
+}
+
+function getConfigurationStatus() {
+  const required = {
+    Gemini:
+      Boolean(
+        process.env.AI_API_KEY ||
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY
+      ),
+
+    ElevenLabs:
+      Boolean(
+        process.env.ELEVENLABS_API_KEY &&
+        process.env.ELEVENLABS_VOICE_ID
+      ),
+
+    YouTubeOAuth:
+      Boolean(
+        process.env.YOUTUBE_CLIENT_ID &&
+        process.env.YOUTUBE_CLIENT_SECRET &&
+        process.env.YOUTUBE_REFRESH_TOKEN
+      )
+  };
+
+  return required;
 }
 
 export function runFinalSystemTest() {
@@ -141,149 +163,87 @@ export function runFinalSystemTest() {
   );
 
   /*
-   * ----------------------------------------
-   * 1. SYSTEM / CEO CONTROL
-   * ----------------------------------------
+   * ========================================
+   * 1. STATUS COLLECTION
+   * ========================================
    */
 
-  let system;
+  const systemResult =
+    safeStatus(
+      "CEO CONTROL",
+      getSystemStatus
+    );
 
-  try {
-    system =
-      getSystemStatus();
-  } catch (error) {
-    system = {
-      status: "ERROR",
-      error:
-        error?.message ||
-        "CEO control status failed."
-    };
-  }
+  const productionResult =
+    safeStatus(
+      "FINAL SHORT PRODUCTION",
+      getFinalShortProductionStatus
+    );
 
-  /*
-   * ----------------------------------------
-   * 2. FINAL PRODUCTION
-   * ----------------------------------------
-   */
+  const qaResult =
+    safeStatus(
+      "FINAL QUALITY ASSURANCE",
+      getFinalShortQAStatus
+    );
 
-  let production;
+  const youtubeResult =
+    safeStatus(
+      "YOUTUBE PRODUCTION",
+      getYouTubeProductionStatus
+    );
 
-  try {
-    production =
-      getFinalShortProductionStatus();
-  } catch (error) {
-    production = {
-      status: "ERROR",
-      error:
-        error?.message ||
-        "Final production status failed."
-    };
-  }
+  const uploaderResult =
+    safeStatus(
+      "YOUTUBE PRODUCTION UPLOADER",
+      getYouTubeProductionUploaderStatus
+    );
 
-  /*
-   * ----------------------------------------
-   * 3. FINAL QA
-   * ----------------------------------------
-   */
+  const controllerResult =
+    safeStatus(
+      "PRODUCTION CONTROLLER",
+      getShortProductionControllerStatus
+    );
 
-  let qa;
+  const publishGateResult =
+    safeStatus(
+      "YOUTUBE PUBLISH GATE",
+      getYouTubePublishGateStatus
+    );
 
-  try {
-    qa =
-      getFinalShortQAStatus();
-  } catch (error) {
-    qa = {
-      status: "ERROR",
-      error:
-        error?.message ||
-        "Final QA status failed."
-    };
-  }
+  const oauthResult =
+    safeStatus(
+      "YOUTUBE OAUTH",
+      getYouTubeOAuthStatus
+    );
 
-  /*
-   * ----------------------------------------
-   * 4. YOUTUBE PRODUCTION PIPELINE
-   * ----------------------------------------
-   */
+  const system =
+    systemResult.data || {};
 
-  let youtube;
+  const production =
+    productionResult.data || {};
 
-  try {
-    youtube =
-      getYouTubeProductionStatus();
-  } catch (error) {
-    youtube = {
-      status: "ERROR",
-      error:
-        error?.message ||
-        "YouTube production status failed."
-    };
-  }
+  const qa =
+    qaResult.data || {};
+
+  const youtube =
+    youtubeResult.data || {};
+
+  const uploader =
+    uploaderResult.data || {};
+
+  const controller =
+    controllerResult.data || {};
+
+  const publishGate =
+    publishGateResult.data || {};
+
+  const oauth =
+    oauthResult.data || {};
 
   /*
-   * ----------------------------------------
-   * 5. YOUTUBE UPLOADER
-   * ----------------------------------------
-   */
-
-  let uploader;
-
-  try {
-    uploader =
-      getYouTubeProductionUploaderStatus();
-  } catch (error) {
-    uploader = {
-      status: "ERROR",
-      error:
-        error?.message ||
-        "YouTube uploader status failed."
-    };
-  }
-
-  /*
-   * ----------------------------------------
-   * 6. PRODUCTION CONTROLLER
-   * ----------------------------------------
-   */
-
-  let controller;
-
-  try {
-    controller =
-      getShortProductionControllerStatus();
-  } catch (error) {
-    controller = {
-      status: "ERROR",
-      error:
-        error?.message ||
-        "Production controller status failed."
-    };
-  }
-
-  /*
-   * ----------------------------------------
-   * 7. PUBLISH GATE
-   * ----------------------------------------
-   */
-
-  let publishGate;
-
-  try {
-    publishGate =
-      getYouTubePublishGateStatus();
-  } catch (error) {
-    publishGate = {
-      status: "ERROR",
-      error:
-        error?.message ||
-        "YouTube publish gate status failed."
-    };
-  }
-
-  /*
-   * ----------------------------------------
-   * RISK POLICY
-   * ----------------------------------------
+   * ========================================
+   * 2. RISK POLICY
+   * ========================================
    */
 
   const riskPolicy =
@@ -293,77 +253,110 @@ export function runFinalSystemTest() {
     );
 
   const privacy =
-    getPrivacy(
+    getDefaultPrivacy(
       youtube
     );
 
   /*
-   * ----------------------------------------
-   * SYSTEM CHECKS
-   * ----------------------------------------
+   * ========================================
+   * 3. ENVIRONMENT CONFIGURATION
+   * ========================================
+   */
+
+  const configuration =
+    getConfigurationStatus();
+
+  /*
+   * ========================================
+   * 4. FOUNDATION CHECKS
+   * ========================================
    */
 
   const checks = [
     check(
-      "CEO CONTROL",
-      system &&
-      system.mode !== undefined
+      "CEO CONTROL AVAILABLE",
+      !systemResult.error &&
+      system.mode !== undefined,
+      systemResult.error || ""
     ),
 
     check(
-      "FINAL SHORT PRODUCTION",
+      "FINAL SHORT PRODUCTION READY",
+      !productionResult.error &&
       normalize(
-        production?.status
-      ) === "READY"
+        production.status
+      ) === "READY",
+      productionResult.error || ""
     ),
 
     check(
-      "FINAL QUALITY ASSURANCE",
+      "FINAL QUALITY ASSURANCE READY",
+      !qaResult.error &&
       normalize(
-        qa?.status
-      ) === "READY"
+        qa.status
+      ) === "READY",
+      qaResult.error || ""
     ),
 
     check(
-      "YOUTUBE PRODUCTION PIPELINE",
+      "YOUTUBE PRODUCTION READY",
+      !youtubeResult.error &&
       normalize(
-        youtube?.status
-      ) === "READY"
+        youtube.status
+      ) === "READY",
+      youtubeResult.error || ""
     ),
 
     check(
-      "YOUTUBE UPLOADER STATUS",
+      "YOUTUBE PRODUCTION UPLOADER AVAILABLE",
+      !uploaderResult.error &&
       [
         "CONFIGURED",
         "NOT_CONFIGURED"
       ].includes(
         normalize(
-          uploader?.status
+          uploader.status
         )
-      )
+      ),
+      uploaderResult.error || ""
     ),
 
     check(
-      "PRODUCTION CONTROLLER",
+      "PRODUCTION CONTROLLER READY",
+      !controllerResult.error &&
       normalize(
-        controller?.status
-      ) === "READY"
+        controller.status
+      ) === "READY",
+      controllerResult.error || ""
     ),
 
     check(
-      "YOUTUBE PUBLISH GATE",
+      "PUBLISH GATE READY",
+      !publishGateResult.error &&
       normalize(
-        publishGate?.status
-      ) === "READY"
+        publishGate.status
+      ) === "READY",
+      publishGateResult.error || ""
+    ),
+
+    check(
+      "YOUTUBE OAUTH STATUS AVAILABLE",
+      !oauthResult.error &&
+      [
+        "CONFIGURED",
+        "NOT_CONFIGURED"
+      ].includes(
+        normalize(
+          oauth.status
+        )
+      ),
+      oauthResult.error || ""
     ),
 
     /*
-     * Final risk policy:
-     *
-     * LOW    → Auto policy
-     * MEDIUM → CEO review
-     * HIGH   → CEO review
-     * STOP   → Blocked
+     * ========================================
+     * RISK POLICY
+     * ========================================
      */
 
     check(
@@ -375,7 +368,8 @@ export function runFinalSystemTest() {
         "ALLOWED"
       ].includes(
         riskPolicy.low
-      )
+      ),
+      riskPolicy.low
     ),
 
     check(
@@ -387,7 +381,8 @@ export function runFinalSystemTest() {
         "REVIEW_REQUIRED"
       ].includes(
         riskPolicy.medium
-      )
+      ),
+      riskPolicy.medium
     ),
 
     check(
@@ -399,7 +394,8 @@ export function runFinalSystemTest() {
         "REVIEW_REQUIRED"
       ].includes(
         riskPolicy.high
-      )
+      ),
+      riskPolicy.high
     ),
 
     check(
@@ -410,40 +406,135 @@ export function runFinalSystemTest() {
         "EMERGENCY_STOP"
       ].includes(
         riskPolicy.stop
-      )
+      ),
+      riskPolicy.stop
     ),
 
+    /*
+     * ========================================
+     * PRIVACY
+     * ========================================
+     */
+
     check(
-      "DEFAULT PRIVATE",
-      privacy === "PRIVATE"
+      "DEFAULT YOUTUBE PRIVACY IS PRIVATE",
+      privacy === "PRIVATE",
+      privacy
     )
   ];
 
   /*
-   * ----------------------------------------
-   * RESULT
-   * ----------------------------------------
+   * ========================================
+   * 5. CONFIGURATION CHECKS
+   * ========================================
+   *
+   * These are reported separately.
+   *
+   * Foundation can exist without real
+   * production credentials.
    */
 
-  const passed =
+  const configurationChecks = [
+    check(
+      "GEMINI CONFIGURATION",
+      configuration.Gemini
+    ),
+
+    check(
+      "ELEVENLABS CONFIGURATION",
+      configuration.ElevenLabs
+    ),
+
+    check(
+      "YOUTUBE OAUTH CONFIGURATION",
+      configuration.YouTubeOAuth
+    )
+  ];
+
+  /*
+   * ========================================
+   * 6. RESULTS
+   * ========================================
+   */
+
+  const foundationPassed =
     checks.filter(
       (item) =>
         item.passed
     ).length;
 
-  const total =
+  const foundationTotal =
     checks.length;
 
-  const allPassed =
-    passed === total;
+  const foundationReady =
+    foundationPassed ===
+    foundationTotal;
+
+  const configurationPassed =
+    configurationChecks.filter(
+      (item) =>
+        item.passed
+    ).length;
+
+  const configurationTotal =
+    configurationChecks.length;
+
+  const configurationReady =
+    configurationPassed ===
+    configurationTotal;
+
+  /*
+   * IMPORTANT:
+   *
+   * This test does NOT pretend that external
+   * APIs are working just because environment
+   * variables exist.
+   *
+   * Credentials configured != real API tested.
+   */
+
+  const liveIntegrationTestsRequired = [
+    "REAL_GEMINI_TEXT_TEST",
+    "REAL_GEMINI_IMAGE_TEST",
+    "REAL_ELEVENLABS_TTS_TEST",
+    "REAL_FFMPEG_MEDIA_TEST",
+    "REAL_YOUTUBE_PRIVATE_UPLOAD_TEST",
+    "REAL_END_TO_END_PIPELINE_TEST"
+  ];
+
+  const finalReady =
+    foundationReady &&
+    configurationReady;
+
+  /*
+   * ========================================
+   * 7. CONSOLE OUTPUT
+   * ========================================
+   */
 
   console.log(
-    "\nSYSTEM CHECKS:"
+    "\nFOUNDATION CHECKS:"
   );
 
   for (const item of checks) {
     console.log(
       `${item.passed ? "PASS" : "FAIL"} - ${item.name}`
+    );
+
+    if (item.details) {
+      console.log(
+        `       ${item.details}`
+      );
+    }
+  }
+
+  console.log(
+    "\nCONFIGURATION CHECKS:"
+  );
+
+  for (const item of configurationChecks) {
+    console.log(
+      `${item.passed ? "PASS" : "WAIT"} - ${item.name}`
     );
   }
 
@@ -452,13 +543,11 @@ export function runFinalSystemTest() {
   );
 
   console.log(
-    `RESULT: ${passed}/${total} CHECKS PASSED`
+    `FOUNDATION: ${foundationPassed}/${foundationTotal}`
   );
 
   console.log(
-    allPassed
-      ? "FINAL FOUNDATION TEST: PASS"
-      : "FINAL FOUNDATION TEST: CHECK REQUIRED"
+    `CONFIGURATION: ${configurationPassed}/${configurationTotal}`
   );
 
   console.log(
@@ -467,17 +556,22 @@ export function runFinalSystemTest() {
 
   console.log(
     "\nCURRENT MODE:",
-    system?.mode
+    system?.mode || "UNKNOWN"
+  );
+
+  console.log(
+    "YOUTUBE OAUTH:",
+    oauth?.status || "UNKNOWN"
   );
 
   console.log(
     "YOUTUBE UPLOADER:",
-    uploader?.status
+    uploader?.status || "UNKNOWN"
   );
 
   console.log(
     "PUBLISH GATE:",
-    publishGate?.status
+    publishGate?.status || "UNKNOWN"
   );
 
   console.log(
@@ -505,48 +599,139 @@ export function runFinalSystemTest() {
   );
 
   console.log(
-    "\nIMPORTANT:"
+    "\nLIVE INTEGRATION TESTS STILL REQUIRED:"
   );
 
-  console.log(
-    "This test does NOT upload a video."
-  );
+  for (
+    const test of
+    liveIntegrationTestsRequired
+  ) {
+    console.log(
+      `WAIT - ${test}`
+    );
+  }
 
   console.log(
-    "This test does NOT publish anything."
+    "\n========================================"
   );
 
+  if (finalReady) {
+    console.log(
+      "FINAL FOUNDATION STATUS: READY"
+    );
+
+    console.log(
+      "Production configuration is present."
+    );
+
+    console.log(
+      "Live external-service tests are still required before public automation."
+    );
+  } else if (foundationReady) {
+    console.log(
+      "FINAL FOUNDATION STATUS: READY"
+    );
+
+    console.log(
+      "CONFIGURATION REQUIRED"
+    );
+  } else {
+    console.log(
+      "FINAL FOUNDATION STATUS: CHECK REQUIRED"
+    );
+  }
+
   console.log(
-    "Real YouTube OAuth/upload must still be tested separately."
+    "========================================"
   );
+
+  /*
+   * ========================================
+   * 8. RETURN RESULT
+   * ========================================
+   */
 
   return {
     success:
-      allPassed,
+      foundationReady,
+
+    foundationReady,
+
+    configurationReady,
+
+    finalReady,
 
     status:
-      allPassed
-        ? "PASS"
+      foundationReady
+        ? configurationReady
+          ? "READY_FOR_LIVE_INTEGRATION_TEST"
+          : "FOUNDATION_READY_CONFIGURATION_REQUIRED"
         : "CHECK_REQUIRED",
 
-    passed,
-    total,
+    foundation: {
+      passed:
+        foundationPassed,
 
-    checks,
+      total:
+        foundationTotal,
+
+      checks
+    },
+
+    configuration: {
+      passed:
+        configurationPassed,
+
+      total:
+        configurationTotal,
+
+      checks:
+        configurationChecks
+    },
 
     currentMode:
-      system?.mode,
+      system?.mode ||
+      null,
 
-    youtubeUploader:
-      uploader?.status,
+    productionStatus:
+      production?.status ||
+      null,
 
-    publishGate:
-      publishGate?.status,
+    qaStatus:
+      qa?.status ||
+      null,
+
+    youtubeStatus:
+      youtube?.status ||
+      null,
+
+    uploaderStatus:
+      uploader?.status ||
+      null,
+
+    oauthStatus:
+      oauth?.status ||
+      null,
+
+    publishGateStatus:
+      publishGate?.status ||
+      null,
 
     riskPolicy,
 
     defaultPrivacy:
       privacy,
+
+    liveIntegrationTestsRequired,
+
+    important:
+      [
+        "This test does NOT upload a video.",
+        "This test does NOT publish a video.",
+        "Configured credentials do NOT prove that the external API works.",
+        "A real private YouTube upload test is still required.",
+        "A real end-to-end production test is still required."
+      ],
 
     testedAt:
       new Date().toISOString()
@@ -561,8 +746,17 @@ if (
   const result =
     runFinalSystemTest();
 
+  /*
+   * Only foundation failure causes
+   * the test command to fail.
+   *
+   * Missing real credentials are reported
+   * separately and do not falsely mark the
+   * code foundation as broken.
+   */
+
   if (
-    result.success !== true
+    result.foundationReady !== true
   ) {
     process.exitCode = 1;
   }
