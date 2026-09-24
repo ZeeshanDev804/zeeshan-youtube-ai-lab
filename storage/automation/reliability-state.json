@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-24T16:11:26.464Z",
+  "jobs": {
+    "scheduled-europe-1790266284648": {
+      "runId": "scheduled-europe-1790266284648",
+      "topic": "Scheduled automation - EUROPE",
+      "status": "FAILED",
+      "currentStage": "AUTOMATION_CYCLE",
+      "attempts": {},
+      "startedAt": "2026-09-24T16:11:24.650Z",
+      "updatedAt": "2026-09-24T16:11:26.464Z",
+      "completedAt": null,
+      "failedAt": "2026-09-24T16:11:26.464Z",
+      "lastError": {
+        "name": "Error",
+        "message": "NO_VALID_TRENDS",
+        "code": null,
+        "stack": "Error: NO_VALID_TRENDS\n    at runScheduledRegion (file:///home/runner/work/zeeshan-youtube-ai-lab/zeeshan-youtube-ai-lab/src/scheduledAutomationRunner.js:646:11)\n    at async runScheduledAutomation (file:///home/runner/work/zeeshan-youtube-ai-lab/zeeshan-youtube-ai-lab/src/scheduledAutomationRunner.js:781:7)\n    at async file:///home/runner/work/zeeshan-youtube-ai-lab/zeeshan-youtube-ai-lab/[eval1]:81:5"
+      },
+      "metadata": {
+        "region": "EUROPE",
+        "resultStatus": "NO_VALID_TRENDS"
+      }
+    }
+  },
+  "locks": {}
+}

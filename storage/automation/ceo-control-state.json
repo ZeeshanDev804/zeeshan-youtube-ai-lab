@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "mode": "REVIEW",
+  "emergencyStop": false,
+  "emergencyStopReason": null,
+  "emergencyStopAt": null,
+  "emergencyStopClearedAt": null,
+  "daily": {
+    "date": "2026-09-24",
+    "started": 1,
+    "completed": 0
+  },
+  "approvals": {},
+  "reservations": {
+    "schedule:EUROPE:2026-09-24-18": {
+      "reservationId": "reservation_1790266284649_2zx4x2",
+      "key": "schedule:EUROPE:2026-09-24-18",
+      "slot": 1,
+      "region": "EUROPE",
+      "runId": "scheduled-europe-1790266284648",
+      "reservedAt": "2026-09-24T16:11:24.649Z",
+      "status": "RESERVED"
+    }
+  },
+  "updatedAt": "2026-09-24T16:11:24.649Z"
+}
