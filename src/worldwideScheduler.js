@@ -6,7 +6,10 @@ import {
   getCEOAutomationStatus
 } from "./ceoAutomationGuard.js";
 
+
 const MAX_DAILY_VIDEOS = 5;
+
+const SCHEDULE_WINDOW_MINUTES = 15;
 
 const DEFAULT_SCHEDULE = [
   {
@@ -26,6 +29,25 @@ const DEFAULT_SCHEDULE = [
   }
 ];
 
+
+function normalizeRegion(region = "") {
+  return String(region)
+    .trim()
+    .toUpperCase();
+}
+
+
+function getScheduleForRegion(region) {
+  const normalizedRegion =
+    normalizeRegion(region);
+
+  return DEFAULT_SCHEDULE.find(
+    (entry) =>
+      entry.region === normalizedRegion
+  );
+}
+
+
 function getLocalParts(
   timezone,
   date = new Date()
@@ -34,86 +56,145 @@ function getLocalParts(
     new Intl.DateTimeFormat(
       "en-US",
       {
-        timeZone:
-          timezone,
-        hour:
-          "2-digit",
-        minute:
-          "2-digit",
-        hour12:
-          false,
-        weekday:
-          "short"
+        timeZone: timezone,
+        hour: "2-digit",
+        minute: "2-digit",
+        weekday: "short",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour12: false
       }
     );
 
   const parts =
-    formatter.formatToParts(
-      date
-    );
+    formatter.formatToParts(date);
 
   const result = {};
 
   for (const part of parts) {
-    if (
-      part.type !==
-      "literal"
-    ) {
+    if (part.type !== "literal") {
       result[part.type] =
         part.value;
     }
   }
 
   return {
+    year:
+      Number(result.year),
+
+    month:
+      Number(result.month),
+
+    day:
+      Number(result.day),
+
     hour:
       Number(result.hour),
+
     minute:
       Number(result.minute),
+
     weekday:
       result.weekday
   };
 }
 
+
 function isScheduledHour(
+  hour,
+  minute,
+  scheduleHours
+) {
+  if (
+    !Array.isArray(scheduleHours) ||
+    scheduleHours.length === 0
+  ) {
+    return false;
+  }
+
+  return scheduleHours.some(
+    (scheduledHour) => {
+
+      const difference =
+        minute >= 0
+          ? Math.abs(
+              hour * 60 +
+              minute -
+              scheduledHour * 60
+            )
+          : Infinity;
+
+      return (
+        difference <
+        SCHEDULE_WINDOW_MINUTES
+      );
+    }
+  );
+}
+
+
+function getCurrentScheduleSlot(
   hour,
   scheduleHours
 ) {
-  return scheduleHours.includes(
-    hour
-  );
+  if (!Array.isArray(scheduleHours)) {
+    return null;
+  }
+
+  const matchingHour =
+    scheduleHours.find(
+      (scheduledHour) =>
+        scheduledHour === hour
+    );
+
+  if (
+    matchingHour === undefined
+  ) {
+    return null;
+  }
+
+  return matchingHour;
 }
+
 
 export function getWorldwideSchedule() {
   return DEFAULT_SCHEDULE.map(
     (item) => ({
       region:
         item.region,
+
       timezone:
         item.timezone,
+
       hours: [
         ...item.hours
-      ]
+      ],
+
+      windowMinutes:
+        SCHEDULE_WINDOW_MINUTES,
+
+      maximumDailyVideos:
+        MAX_DAILY_VIDEOS
     })
   );
 }
+
 
 export function getRegionalTime(
   region,
   date = new Date()
 ) {
   const item =
-    DEFAULT_SCHEDULE.find(
-      (entry) =>
-        entry.region ===
-        String(region)
-          .toUpperCase()
-    );
+    getScheduleForRegion(region);
 
   if (!item) {
     return {
       success: false,
       status:
-        "REGION_NOT_FOUND"
+        "REGION_NOT_FOUND",
+      region:
+        normalizeRegion(region)
     };
   }
 
@@ -125,33 +206,39 @@ export function getRegionalTime(
 
   return {
     success: true,
+
     region:
       item.region,
+
     timezone:
       item.timezone,
-    ...local
+
+    ...local,
+
+    scheduledHours:
+      [...item.hours]
   };
 }
+
 
 export async function evaluateSchedule({
   region,
   date = new Date()
 } = {}) {
+
   const item =
-    DEFAULT_SCHEDULE.find(
-      (entry) =>
-        entry.region ===
-        String(region)
-          .toUpperCase()
-    );
+    getScheduleForRegion(region);
 
   if (!item) {
     return {
       eligible: false,
       status:
-        "REGION_NOT_FOUND"
+        "REGION_NOT_FOUND",
+      region:
+        normalizeRegion(region)
     };
   }
+
 
   const local =
     getLocalParts(
@@ -159,163 +246,279 @@ export async function evaluateSchedule({
       date
     );
 
+
   const scheduled =
     isScheduledHour(
+      local.hour,
+      local.minute,
+      item.hours
+    );
+
+
+  const currentSlot =
+    getCurrentScheduleSlot(
       local.hour,
       item.hours
     );
 
+
   const ceo =
     await getCEOAutomationStatus();
 
-  if (
-    ceo.emergencyStop
-  ) {
+
+  if (ceo?.emergencyStop) {
     return {
       eligible: false,
       status:
         "EMERGENCY_STOP",
+
       region:
         item.region,
+
       timezone:
         item.timezone,
+
       local
     };
   }
 
-  if (
-    ceo.mode ===
-    "STOP"
-  ) {
+
+  if (ceo?.mode === "STOP") {
     return {
       eligible: false,
       status:
         "AUTOMATION_STOPPED",
+
       region:
         item.region,
+
       timezone:
         item.timezone,
+
       local
     };
   }
 
+
+  const startedToday =
+    Number(
+      ceo?.daily?.started || 0
+    );
+
+
   if (
-    ceo.daily.started >=
+    startedToday >=
     MAX_DAILY_VIDEOS
   ) {
     return {
       eligible: false,
       status:
         "DAILY_LIMIT_REACHED",
+
       region:
         item.region,
+
       timezone:
         item.timezone,
+
       local,
+
       dailyLimit:
-        MAX_DAILY_VIDEOS
+        MAX_DAILY_VIDEOS,
+
+      startedToday
     };
   }
+
 
   if (!scheduled) {
     return {
       eligible: false,
       status:
         "OUTSIDE_SCHEDULE",
+
       region:
         item.region,
+
       timezone:
         item.timezone,
+
       local,
+
       scheduledHours:
-        item.hours
+        item.hours,
+
+      windowMinutes:
+        SCHEDULE_WINDOW_MINUTES
     };
   }
+
 
   const gate =
     await canStartAutomation({
       requestedVideos: 1
     });
 
-  if (!gate.allowed) {
+
+  if (!gate?.allowed) {
     return {
       eligible: false,
+
       status:
-        gate.status,
+        gate?.status ||
+        "AUTOMATION_GATE_BLOCKED",
+
       reason:
-        gate.reason,
+        gate?.reason ||
+        "Automation gate rejected the scheduled run.",
+
       region:
         item.region,
+
       timezone:
         item.timezone,
+
       local
     };
   }
 
+
   return {
     eligible: true,
+
     status:
       "SCHEDULE_READY",
+
     region:
       item.region,
+
     timezone:
       item.timezone,
+
     local,
+
     scheduledHours:
-      item.hours,
+      [...item.hours],
+
+    currentSlot,
+
+    windowMinutes:
+      SCHEDULE_WINDOW_MINUTES,
+
+    dailyLimit:
+      MAX_DAILY_VIDEOS,
+
+    dailyStarted:
+      startedToday,
+
     dailyRemaining:
-      MAX_DAILY_VIDEOS -
-      ceo.daily.started
+      Math.max(
+        0,
+        MAX_DAILY_VIDEOS -
+          startedToday
+      )
   };
 }
+
 
 export async function reserveScheduledRun({
   region,
   date = new Date()
 } = {}) {
+
   const evaluation =
     await evaluateSchedule({
       region,
       date
     });
 
-  if (
-    !evaluation.eligible
-  ) {
+
+  if (!evaluation?.eligible) {
     return evaluation;
   }
+
+
+  /*
+   * The CEO guard performs the actual
+   * daily-slot reservation.
+   */
 
   const reservation =
     await reserveDailySlot();
 
-  if (
-    !reservation.success
-  ) {
+
+  if (!reservation?.success) {
     return {
       eligible: false,
+
       status:
-        reservation.status,
+        reservation?.status ||
+        "DAILY_SLOT_RESERVATION_FAILED",
+
+      region:
+        evaluation.region,
+
+      timezone:
+        evaluation.timezone,
+
+      local:
+        evaluation.local,
+
       reservation
     };
   }
 
+
   return {
     eligible: true,
+
     status:
       "SCHEDULE_RESERVED",
+
     region:
       evaluation.region,
+
     timezone:
       evaluation.timezone,
+
     local:
       evaluation.local,
-    reservation
+
+    currentSlot:
+      evaluation.currentSlot,
+
+    reservation,
+
+    dailyRemaining:
+      Math.max(
+        0,
+        MAX_DAILY_VIDEOS -
+          Number(
+            reservation?.daily?.started ||
+            0
+          )
+      )
   };
 }
 
+
 export async function getSchedulerStatus() {
+
   const ceo =
     await getCEOAutomationStatus();
+
+
+  const startedToday =
+    Number(
+      ceo?.daily?.started || 0
+    );
+
+
+  const completedToday =
+    Number(
+      ceo?.daily?.completed || 0
+    );
+
 
   return {
     success: true,
@@ -326,29 +529,33 @@ export async function getSchedulerStatus() {
     maximumVideosPerDay:
       MAX_DAILY_VIDEOS,
 
+    scheduleWindowMinutes:
+      SCHEDULE_WINDOW_MINUTES,
+
     mode:
-      ceo.mode,
+      ceo?.mode,
 
     emergencyStop:
-      ceo.emergencyStop,
+      Boolean(
+        ceo?.emergencyStop
+      ),
 
-    startedToday:
-      ceo.daily.started,
+    startedToday,
 
-    completedToday:
-      ceo.daily.completed,
+    completedToday,
 
     remainingToday:
       Math.max(
         0,
         MAX_DAILY_VIDEOS -
-          ceo.daily.started
+          startedToday
       ),
 
     regions:
       getWorldwideSchedule()
   };
 }
+
 
 export default {
   getWorldwideSchedule,
