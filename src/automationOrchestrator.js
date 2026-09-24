@@ -3,7 +3,6 @@ import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { config } from "./config.js";
 import { collectTrends } from "./trendRadar.js";
 import { researchTopic } from "./researchEngine.js";
 import { generateScript } from "./scriptEngine.js";
@@ -12,11 +11,13 @@ import { checkCopyrightSafety } from "./copyrightGuard.js";
 import { checkDuplicateContent } from "./duplicateGuard.js";
 import { produceFinalShort } from "./finalShortProductionPipeline.js";
 import { checkFinalShortQuality } from "./finalShortQAPipeline.js";
+
 import {
   canRunAutomation,
   createCEOApprovalRequest,
   getSystemStatus
 } from "./ceoControl.js";
+
 import {
   prepareSupportingContent,
   getContentLearningReport
@@ -143,13 +144,12 @@ async function appendLog(entry) {
       ...entry,
       loggedAt:
         new Date().toISOString()
-    })}\n`
+    })}\n`,
+    "utf8"
   );
 }
 
-function resetDailyStateIfNeeded(
-  state
-) {
+function resetDailyStateIfNeeded(state) {
   const today =
     new Date()
       .toISOString()
@@ -166,20 +166,21 @@ function resetDailyStateIfNeeded(
   return state;
 }
 
-function getDailyLimitStatus(
-  state
-) {
+function getDailyLimitStatus(state) {
   const used = Number(
     state.dailyCount || 0
   );
 
   return {
     limit: MAX_DAILY_VIDEOS,
+
     used,
+
     remaining: Math.max(
       0,
       MAX_DAILY_VIDEOS - used
     ),
+
     reached:
       used >= MAX_DAILY_VIDEOS
   };
@@ -264,9 +265,7 @@ async function runStage(
   };
 }
 
-function extractTrendList(
-  trendsResult
-) {
+function extractTrendList(trendsResult) {
   if (
     Array.isArray(
       trendsResult
@@ -368,9 +367,7 @@ function normalizeTrend(
   };
 }
 
-function selectTrend(
-  trends
-) {
+function selectTrend(trends) {
   const normalized =
     extractTrendList(
       trends
@@ -397,16 +394,19 @@ function selectTrend(
 function getResearchResult(
   researchStageResult
 ) {
+  if (
+    researchStageResult?.result
+  ) {
+    return researchStageResult.result;
+  }
+
   return (
-    researchStageResult?.result ||
     researchStageResult ||
     null
   );
 }
 
-function getResearchText(
-  research
-) {
+function getResearchText(research) {
   const claims =
     Array.isArray(
       research?.claims
@@ -461,9 +461,16 @@ function getResearchText(
   );
 }
 
-function getScriptText(
-  scriptResult
-) {
+function getScriptText(scriptResult) {
+  if (
+    typeof scriptResult ===
+    "string"
+  ) {
+    return cleanText(
+      scriptResult
+    );
+  }
+
   return cleanText(
     scriptResult?.script ||
     scriptResult?.content ||
@@ -473,9 +480,7 @@ function getScriptText(
   );
 }
 
-function normalizeRisk(
-  value
-) {
+function normalizeRisk(value) {
   const risk =
     String(
       value || ""
@@ -525,7 +530,7 @@ function calculateRiskLevel({
 
   if (
     researchStatus !==
-      "RESEARCH_SUPPORTED"
+    "RESEARCH_SUPPORTED"
   ) {
     risks.push("MEDIUM");
   }
@@ -539,7 +544,9 @@ function calculateRiskLevel({
   }
 
   if (
-    copyright?.status ===
+    String(
+      copyright?.status || ""
+    ).toUpperCase() ===
     "REVIEW"
   ) {
     risks.push("MEDIUM");
@@ -550,10 +557,8 @@ function calculateRiskLevel({
   }
 
   if (
-    duplicate?.isDuplicate ===
-      true ||
-    duplicate?.duplicate ===
-      true ||
+    duplicate?.isDuplicate === true ||
+    duplicate?.duplicate === true ||
     duplicate?.blocked === true
   ) {
     risks.push("HIGH");
@@ -641,6 +646,7 @@ async function loadExistingContent() {
 function createManifest({
   runId,
   topic,
+  title,
   script,
   description,
   language,
@@ -655,7 +661,10 @@ function createManifest({
         cleanText(topic),
 
       title:
-        cleanText(topic),
+        cleanText(
+          title ||
+          topic
+        ),
 
       description:
         cleanText(description),
@@ -669,7 +678,9 @@ function createManifest({
     script:
       cleanText(script),
 
-    production,
+    production:
+
+      production || null,
 
     createdAt:
       new Date().toISOString()
@@ -703,6 +714,54 @@ async function runSupportingContentStage({
 
       status:
         "SUPPORTING_CONTENT_FAILED",
+
+      error:
+        error?.message ||
+        String(error)
+    };
+  }
+}
+
+async function createCEOReview({
+  runId,
+  topic,
+  riskLevel,
+  manifest,
+  safety,
+  copyright,
+  duplicate,
+  qa
+}) {
+  try {
+    return await createCEOApprovalRequest({
+      type:
+        "YOUTUBE_SHORT_PUBLISH",
+
+      runId,
+
+      topic,
+
+      riskLevel,
+
+      reason:
+        `Automation produced a ${riskLevel} risk Short that requires CEO approval.`,
+
+      manifest,
+
+      safety,
+
+      copyright,
+
+      duplicate,
+
+      qa
+    });
+  } catch (error) {
+    return {
+      success: false,
+
+      status:
+        "APPROVAL_REQUEST_FAILED",
 
       error:
         error?.message ||
@@ -749,9 +808,12 @@ export async function runAutomation({
 
     return {
       success: false,
+
       status:
         "DAILY_LIMIT_REACHED",
+
       runId,
+
       dailyLimit:
         limit
     };
@@ -773,11 +835,13 @@ export async function runAutomation({
     };
   }
 
-  let automationAllowed;
+  let automationAllowed =
+    false;
 
   try {
     automationAllowed =
-      canRunAutomation();
+      canRunAutomation() ===
+      true;
   } catch {
     automationAllowed =
       false;
@@ -1017,12 +1081,6 @@ export async function runAutomation({
       research
     );
 
-  /*
-   * IMPORTANT:
-   * Only RESEARCH_SUPPORTED can continue
-   * toward automatic production.
-   */
-
   if (
     researchStatus !==
     "RESEARCH_SUPPORTED"
@@ -1089,11 +1147,6 @@ export async function runAutomation({
    * =========================================================
    * 3. SCRIPT GENERATION
    * =========================================================
-   */
-
-  /*
-   * scriptEngine.generateScript() expects a topic object,
-   * not { topic, research, language }.
    */
 
   const scriptInput = {
@@ -1195,6 +1248,20 @@ export async function runAutomation({
     };
   }
 
+  const finalTitle =
+    cleanText(
+      scriptResult?.title ||
+      title ||
+      selectedTopic
+    );
+
+  const finalDescription =
+    cleanText(
+      description ||
+      scriptResult?.description ||
+      ""
+    );
+
   /*
    * =========================================================
    * 4. SAFETY
@@ -1207,15 +1274,13 @@ export async function runAutomation({
       async () =>
         analyzeSafety({
           title:
-            scriptResult?.title ||
-            selectedTopic,
+            finalTitle,
 
           script:
             finalScript,
 
           description:
-            scriptResult?.description ||
-            description,
+            finalDescription,
 
           research:
             researchEnvelope
@@ -1252,17 +1317,11 @@ export async function runAutomation({
     safetyStage.result;
 
   const safetyLevel =
-    String(
+    normalizeRisk(
       safety?.level ||
-      safety?.riskLevel ||
-      ""
-    ).toUpperCase();
-
-  /*
-   * HIGH = hard block.
-   * MEDIUM = CEO review.
-   * LOW = continue.
-   */
+      safety?.riskLevel
+    ) ||
+    "MEDIUM";
 
   if (
     safetyLevel ===
@@ -1311,8 +1370,7 @@ export async function runAutomation({
       async () =>
         checkCopyrightSafety({
           title:
-            scriptResult?.title ||
-            selectedTopic,
+            finalTitle,
 
           script:
             finalScript,
@@ -1322,7 +1380,9 @@ export async function runAutomation({
 
           metadata: {
             visuals: [],
+
             audio: [],
+
             category:
               scriptResult?.category ||
               selectedTrend.category ||
@@ -1363,12 +1423,6 @@ export async function runAutomation({
 
   const copyright =
     copyrightStage.result;
-
-  /*
-   * Copyright Guard returns:
-   * PASS  = continue
-   * REVIEW = do not auto-publish
-   */
 
   const copyrightStatus =
     String(
@@ -1422,8 +1476,7 @@ export async function runAutomation({
       async () =>
         checkDuplicateContent({
           title:
-            scriptResult?.title ||
-            selectedTopic,
+            finalTitle,
 
           script:
             finalScript,
@@ -1462,12 +1515,9 @@ export async function runAutomation({
     duplicateStage.result;
 
   if (
-    duplicate?.isDuplicate ===
-      true ||
-    duplicate?.duplicate ===
-      true ||
-    duplicate?.blocked ===
-      true
+    duplicate?.isDuplicate === true ||
+    duplicate?.duplicate === true ||
+    duplicate?.blocked === true
   ) {
     await appendLog({
       runId,
@@ -1530,145 +1580,17 @@ export async function runAutomation({
   /*
    * =========================================================
    * 9. FINAL SHORT PRODUCTION
+   *
+   * LOW:
+   * Production continues automatically.
+   *
+   * MEDIUM:
+   * Production is completed first, then CEO approval.
+   *
+   * HIGH:
+   * Already blocked by safety/duplicate gates.
    * =========================================================
    */
-
-  /*
-   * Do not produce a final video when the content
-   * already requires CEO review.
-   *
-   * This prevents unnecessary media generation for
-   * content that cannot safely reach publishing.
-   */
-
-  if (
-    requiresCEOApproval
-  ) {
-    await appendLog({
-      runId,
-
-      status:
-        "CEO_REVIEW_REQUIRED",
-
-      riskLevel
-    });
-
-    const manifest =
-      createManifest({
-        runId,
-
-        topic:
-          selectedTopic,
-
-        script:
-          finalScript,
-
-        description:
-          cleanText(
-            description ||
-            scriptResult?.description ||
-            ""
-          ),
-
-        language,
-
-        production:
-          null,
-
-        riskLevel
-      });
-
-    let approval = null;
-
-    try {
-      approval =
-        await createCEOApprovalRequest({
-          type:
-            "YOUTUBE_SHORT_PUBLISH",
-
-          runId,
-
-          topic:
-            selectedTopic,
-
-          riskLevel,
-
-          reason:
-            `Automation requires CEO review because risk level is ${riskLevel}.`,
-
-          manifest,
-
-          safety,
-
-          copyright,
-
-          duplicate
-        });
-    } catch (error) {
-      approval = {
-        success: false,
-
-        status:
-          "APPROVAL_REQUEST_FAILED",
-
-        error:
-          error?.message ||
-          String(error)
-      };
-    }
-
-    state =
-      await writeState({
-        ...state,
-
-        lastRun:
-          new Date().toISOString(),
-
-        lastStatus:
-          "CEO_REVIEW_REQUIRED",
-
-        lastRunId:
-          runId
-      });
-
-    return {
-      success: true,
-
-      status:
-        "CEO_REVIEW_REQUIRED",
-
-      runId,
-
-      topic:
-        selectedTopic,
-
-      riskLevel,
-
-      requiresCEOApproval:
-        true,
-
-      manifest,
-
-      safety,
-
-      copyright,
-
-      duplicate,
-
-      supportingContent:
-        supportingStage,
-
-      approval,
-
-      dailyLimit:
-        getDailyLimitStatus(
-          state
-        ),
-
-      nextStage:
-        "CEO_APPROVAL"
-    };
-  }
 
   const productionStage =
     await runStage(
@@ -1677,6 +1599,9 @@ export async function runAutomation({
         produceFinalShort({
           topic:
             selectedTopic,
+
+          title:
+            finalTitle,
 
           script:
             finalScript,
@@ -1737,15 +1662,14 @@ export async function runAutomation({
       topic:
         selectedTopic,
 
+      title:
+        finalTitle,
+
       script:
         finalScript,
 
       description:
-        cleanText(
-          description ||
-          scriptResult?.description ||
-          ""
-        ),
+        finalDescription,
 
       language,
 
@@ -1756,20 +1680,21 @@ export async function runAutomation({
 
   /*
    * =========================================================
-   * 11. FINAL VIDEO QA
+   * 11. FINAL VIDEO
    * =========================================================
    */
 
   const finalVideoFile =
-    production?.finalVideo
-      ?.outputFile ||
-    production?.finalVideoFile ||
-    production?.outputFile;
+    cleanText(
+      production?.finalVideo
+        ?.outputFile ||
+      production?.finalVideoFile ||
+      production?.outputFile ||
+      ""
+    );
 
   if (
-    !cleanText(
-      finalVideoFile
-    )
+    !finalVideoFile
   ) {
     await appendLog({
       runId,
@@ -1796,6 +1721,12 @@ export async function runAutomation({
       production
     };
   }
+
+  /*
+   * =========================================================
+   * 12. FINAL VIDEO QA
+   * =========================================================
+   */
 
   const qaStage =
     await runStage(
@@ -1880,7 +1811,10 @@ export async function runAutomation({
 
   /*
    * =========================================================
-   * 12. CEO APPROVAL GATE
+   * 13. CEO APPROVAL GATE
+   *
+   * IMPORTANT:
+   * CEO receives the completed final MP4 + QA result.
    * =========================================================
    */
 
@@ -1889,38 +1823,25 @@ export async function runAutomation({
   if (
     requiresCEOApproval
   ) {
-    try {
-      approval =
-        await createCEOApprovalRequest({
-          type:
-            "YOUTUBE_SHORT_PUBLISH",
+    approval =
+      await createCEOReview({
+        runId,
 
-          runId,
+        topic:
+          selectedTopic,
 
-          topic:
-            selectedTopic,
+        riskLevel,
 
-          riskLevel,
+        manifest,
 
-          reason:
-            `Automation produced a ${riskLevel} risk Short that requires CEO approval.`,
+        safety,
 
-          manifest,
+        copyright,
 
-          qa
-        });
-    } catch (error) {
-      approval = {
-        success: false,
+        duplicate,
 
-        status:
-          "APPROVAL_REQUEST_FAILED",
-
-        error:
-          error?.message ||
-          String(error)
-      };
-    }
+        qa
+      });
 
     await appendLog({
       runId,
@@ -1928,7 +1849,9 @@ export async function runAutomation({
       status:
         "CEO_REVIEW_REQUIRED",
 
-      riskLevel
+      riskLevel,
+
+      finalVideoFile
     });
 
     state =
@@ -1956,6 +1879,14 @@ export async function runAutomation({
       topic:
         selectedTopic,
 
+      title:
+        finalTitle,
+
+      description:
+        finalDescription,
+
+      language,
+
       riskLevel,
 
       requiresCEOApproval:
@@ -1965,7 +1896,15 @@ export async function runAutomation({
 
       production,
 
+      finalVideoFile,
+
       qa,
+
+      safety,
+
+      copyright,
+
+      duplicate,
 
       supportingContent:
         supportingStage,
@@ -1978,13 +1917,13 @@ export async function runAutomation({
         ),
 
       nextStage:
-        "CEO_APPROVAL"
+        "YOUTUBE_UPLOAD_AFTER_CEO_APPROVAL"
     };
   }
 
   /*
    * =========================================================
-   * 13. DRY RUN
+   * 14. DRY RUN
    * =========================================================
    */
 
@@ -1995,7 +1934,9 @@ export async function runAutomation({
       runId,
 
       status:
-        "DRY_RUN_READY"
+        "DRY_RUN_READY",
+
+      finalVideoFile
     });
 
     state =
@@ -2023,6 +1964,14 @@ export async function runAutomation({
       topic:
         selectedTopic,
 
+      title:
+        finalTitle,
+
+      description:
+        finalDescription,
+
+      language,
+
       riskLevel,
 
       requiresCEOApproval:
@@ -2031,6 +1980,8 @@ export async function runAutomation({
       manifest,
 
       production,
+
+      finalVideoFile,
 
       qa,
 
@@ -2049,7 +2000,7 @@ export async function runAutomation({
 
   /*
    * =========================================================
-   * 14. READY FOR YOUTUBE
+   * 15. READY FOR YOUTUBE PIPELINE
    * =========================================================
    */
 
@@ -2089,6 +2040,8 @@ export async function runAutomation({
 
     riskLevel,
 
+    finalVideoFile,
+
     dailyCount:
       state.dailyCount
   });
@@ -2105,18 +2058,10 @@ export async function runAutomation({
       selectedTopic,
 
     title:
-      cleanText(
-        scriptResult?.title ||
-        title ||
-        selectedTopic
-      ),
+      finalTitle,
 
     description:
-      cleanText(
-        description ||
-        scriptResult?.description ||
-        ""
-      ),
+      finalDescription,
 
     language,
 
@@ -2128,6 +2073,8 @@ export async function runAutomation({
     manifest,
 
     production,
+
+    finalVideoFile,
 
     qa,
 
@@ -2257,7 +2204,7 @@ export async function getAutomationStatus() {
       "SEPARATE_YOUTUBE_PIPELINE",
 
     message:
-      "Automation orchestrator is ready. Maximum five Shorts per day. Final YouTube publishing remains behind dedicated upload and CEO safety gates."
+      "Automation orchestrator is ready. Maximum five Shorts per day. Final video must pass QA and remains behind dedicated YouTube upload and CEO safety gates."
   };
 }
 
