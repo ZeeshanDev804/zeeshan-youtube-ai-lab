@@ -43,6 +43,11 @@ import {
   getSystemStatus
 } from "./ceoControl.js";
 
+import {
+  prepareSupportingContent,
+  getContentLearningReport
+} from "./contentLearningIntegration.js";
+
 const STATE_FILE =
   process.env.AUTOMATION_STATE_FILE ||
   "./storage/automation/automation-state.json";
@@ -321,7 +326,8 @@ function buildManifest({
   voice,
   visuals,
   visualVideo,
-  finalVideo
+  finalVideo,
+  captions
 } = {}) {
   return {
     id:
@@ -408,12 +414,33 @@ function buildManifest({
         null
     },
 
+    captions: {
+      status:
+        captions?.status ||
+        "UNKNOWN",
+
+      format:
+        captions?.format ||
+        "SRT",
+
+      outputFile:
+        captions?.outputFile ||
+        null,
+
+      segmentCount:
+        safeNumber(
+          captions?.segmentCount,
+          0
+        )
+    },
+
     productionOrder: [
       "SCRIPT",
       "VOICE",
       "VISUALS",
       "VIDEO_RENDER",
       "FINAL_AUDIO_VIDEO_MERGE",
+      "CAPTIONS",
       "QUALITY_CHECK",
       "CEO_GATE",
       "PUBLISH"
@@ -620,12 +647,6 @@ export async function runAutomationCycle({
     return result;
   }
 
-  /*
-   * Reserve the production slot.
-   * This prevents multiple runs from
-   * silently exceeding the daily limit.
-   */
-
   await updateDailyState({
     createdToday:
       daily.createdToday + 1,
@@ -725,11 +746,6 @@ export async function runAutomationCycle({
     getResearchConfidence(
       research
     );
-
-  /*
-   * Never allow unverified factual
-   * content to enter production.
-   */
 
   if (
     researchStatus ===
@@ -1013,7 +1029,53 @@ export async function runAutomationCycle({
 
   /*
    * ---------------------------------------------------------
-   * 8. RISK / CEO REVIEW DECISION
+   * 8. SUPPORTING CONTENT
+   * ---------------------------------------------------------
+   */
+
+  let supportingContent = null;
+
+  try {
+    supportingContent =
+      prepareSupportingContent({
+        topic: title,
+        existingContent
+      });
+
+    if (
+      supportingContent &&
+      supportingContent.success === false
+    ) {
+      await appendLog({
+        type:
+          "SUPPORTING_CONTENT_REVIEW",
+        runId,
+        result:
+          supportingContent
+      });
+    }
+  } catch (error) {
+    supportingContent = {
+      success: false,
+      status:
+        "SUPPORTING_CONTENT_FAILED",
+      error:
+        error?.message ||
+        String(error)
+    };
+
+    await appendLog({
+      type:
+        "SUPPORTING_CONTENT_ERROR",
+      runId,
+      error:
+        supportingContent.error
+    });
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * 9. RISK / CEO REVIEW DECISION
    * ---------------------------------------------------------
    */
 
@@ -1071,7 +1133,7 @@ export async function runAutomationCycle({
 
   /*
    * ---------------------------------------------------------
-   * 9. REAL PRODUCTION
+   * 10. REAL PRODUCTION
    * ---------------------------------------------------------
    */
 
@@ -1135,7 +1197,7 @@ export async function runAutomationCycle({
 
   /*
    * ---------------------------------------------------------
-   * 10. FINAL QA
+   * 11. FINAL QA
    * ---------------------------------------------------------
    */
 
@@ -1154,410 +1216,6 @@ export async function runAutomationCycle({
       visualVideo:
         production.visualVideo,
       finalVideo:
-        production.finalVideo
-    });
-
-  const qaRun =
-    await retryStage(
-      "QUALITY_ASSURANCE",
-      () =>
-        checkFinalShortQuality({
-          manifest,
-          finalVideoFile:
-            production.finalVideo
-              .outputFile
-        }),
-      maxRetries
-    );
-
-  if (!qaRun.success) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "QA_FAILED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "QUALITY_ASSURANCE",
-      reason:
-        "Final video QA failed.",
-      details:
-        qaRun
-    });
-  }
-
-  const qa =
-    qaRun.result;
-
-  if (
-    qa?.passed !== true
-  ) {
-    await updateDailyState({
-      failedToday:
-        daily.failedToday + 1,
-      lastStatus:
-        "QA_BLOCKED"
-    });
-
-    return blockedResult({
-      runId,
-      stage: "QUALITY_ASSURANCE",
-      reason:
-        "Final video did not pass quality assurance.",
-      details:
-        qa
-    });
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 11. CEO GATE
-   * ---------------------------------------------------------
-   */
-
-  let approvalRequest =
-    null;
-
-  if (
-    reviewReasons.length > 0 ||
-    riskLevel !== "LOW"
-  ) {
-    approvalRequest =
-      createCEOApprovalRequest({
-        runId,
-        title,
-        riskLevel,
-        reasons:
-          reviewReasons.length > 0
-            ? reviewReasons
-            : [
-                "Content requires CEO authorization before publishing."
-              ],
-
-        topic:
-          selectedTopic,
-
-        research: {
-          status:
-            researchStatus,
-          confidence:
-            researchConfidence,
-          sourceCount:
-            researchSources.length
-        },
-
-        safety,
-
-        copyright,
-
-        duplicate,
-
-        production: {
-          outputFile:
-            production.finalVideo
-              .outputFile,
-
-          sizeBytes:
-            production.finalVideo
-              .sizeBytes
-        },
-
-        qa
-      });
-
-    const result =
-      reviewResult({
-        runId,
-        stage: "CEO_GATE",
-        reason:
-          "Final Short passed production QA but requires CEO authorization.",
-        details: {
-          riskLevel,
-          qaStatus:
-            qa.status,
-          outputFile:
-            production.finalVideo
-              .outputFile
-        },
-        approvalRequest
-      });
-
-    await updateDailyState({
-      reviewToday:
-        daily.reviewToday + 1,
-      completedToday:
-        daily.completedToday + 1,
-      lastStatus:
-        "CEO_REVIEW_REQUIRED"
-    });
-
-    await appendLog({
-      type: "CEO_REVIEW_REQUIRED",
-      runId,
-      result
-    });
-
-    return result;
-  }
-
-  /*
-   * ---------------------------------------------------------
-   * 12. READY FOR YOUTUBE
-   * ---------------------------------------------------------
-   *
-   * IMPORTANT:
-   * This stage does NOT upload.
-   * Google Cloud / YouTube OAuth comes later.
-   */
-
-  await updateDailyState({
-    completedToday:
-      daily.completedToday + 1,
-    lastStatus:
-      "READY_FOR_YOUTUBE"
-  });
-
-  const finalResult = {
-    success: true,
-    status:
-      "READY_FOR_YOUTUBE",
-    runId,
-
-    topic: {
-      title,
-      region:
-        selectedTopic.region ||
-        null,
-      category:
-        selectedTopic.category ||
-        "general"
-    },
-
-    research: {
-      status:
-        researchStatus,
-      confidence:
-        researchConfidence,
-      sourceCount:
-        researchSources.length
-    },
-
-    script: {
-      title,
-      description,
-      characters:
-        finalScript.length,
-      words:
-        finalScript.split(/\s+/).length
-    },
-
-    safety,
-
-    copyright,
-
-    duplicate,
-
-    riskLevel,
-
-    production,
-
-    qa,
-
-    manifest,
-
-    nextStage:
-      "YOUTUBE_UPLOAD_GUARD",
-
-    youtubeUpload:
-      "NOT_STARTED",
-
-    createdAt:
-      new Date().toISOString()
-  };
-
-  await appendLog({
-    type: "AUTOMATION_READY",
-    runId,
-    result: {
-      status:
-        finalResult.status,
-      riskLevel,
-      videoFile:
-        production.finalVideo
-          .outputFile
-    }
-  });
-
-  return finalResult;
-}
-
-export async function getAutomationStatus() {
-  const daily =
-    await getDailyState();
-
-  const system =
-    getSystemStatus();
-
-  const maxDaily =
-    Math.min(
-      5,
-      Math.max(
-        1,
-        safeNumber(
-          config.system.maxDailyVideos,
-          5
-        )
-      )
-    );
-
-  return {
-    configured: true,
-
-    status:
-      system.emergencyStop
-        ? "EMERGENCY_STOP"
-        : system.mode === "STOP"
-          ? "STOPPED"
-          : "READY",
-
-    mode:
-      system.mode,
-
-    emergencyStop:
-      system.emergencyStop,
-
-    maxDailyVideos:
-      maxDaily,
-
-    daily: {
-      date:
-        daily.date,
-
-      created:
-        daily.createdToday,
-
-      completed:
-        daily.completedToday,
-
-      failed:
-        daily.failedToday,
-
-      review:
-        daily.reviewToday,
-
-      remaining:
-        Math.max(
-          0,
-          maxDaily -
-            daily.createdToday
-        )
-    },
-
-    pipeline: [
-      "CEO_CONTROL",
-      "DAILY_LIMIT",
-      "TREND_TOPIC",
-      "RESEARCH",
-      "SCRIPT",
-      "SAFETY",
-      "COPYRIGHT",
-      "DUPLICATE",
-      "REAL_VOICE",
-      "REAL_VISUALS",
-      "VIDEO_RENDER",
-      "FINAL_MERGE",
-      "QUALITY_ASSURANCE",
-      "CEO_GATE",
-      "YOUTUBE_UPLOAD_GUARD"
-    ],
-
-    youtubeUpload:
-      "NOT_CONNECTED",
-
-    message:
-      "Automation core is ready. YouTube OAuth/upload remains intentionally disabled until the internal production pipeline is fully verified."
-  };
-}
-
-export async function resetAutomationDailyState() {
-  const freshState = {
-    date:
-      todayKey(),
-
-    createdToday: 0,
-    completedToday: 0,
-    failedToday: 0,
-    reviewToday: 0,
-
-    lastRunAt: null,
-    lastStatus: null,
-    lastRunId: null
-  };
-
-  await writeState(
-    freshState
-  );
-
-  await appendLog({
-    type:
-      "DAILY_STATE_RESET",
-    state:
-      freshState
-  });
-
-  return {
-    success: true,
-    status:
-      "DAILY_STATE_RESET",
-    state:
-      freshState
-  };
-}
-
-export function getAutomationOrchestratorStatus() {
-  return {
-    configured: true,
-
-    status:
-      "READY",
-
-    maxDailyVideos:
-      Math.min(
-        5,
-        Math.max(
-          1,
-          safeNumber(
-            config.system.maxDailyVideos,
-            5
-          )
-        )
-      ),
-
-    supports: [
-      "TREND_SELECTION",
-      "RESEARCH_GATE",
-      "AI_SCRIPT",
-      "SAFETY_GATE",
-      "COPYRIGHT_GATE",
-      "DUPLICATE_GATE",
-      "REAL_VOICE",
-      "REAL_VISUALS",
-      "REAL_VIDEO",
-      "FINAL_QA",
-      "CEO_REVIEW",
-      "EMERGENCY_STOP",
-      "DAILY_LIMIT",
-      "RETRY",
-      "FAILURE_LOG",
-      "YOUTUBE_READY_HANDOFF"
-    ],
-
-    youtubeUpload:
-      "DISABLED_UNTIL_OAUTH",
-
-    message:
-      "Central automation orchestrator is configured for the internal YouTube Short production pipeline."
-  };
-}
+        production.finalVideo,
+      captions:
+        production.c
