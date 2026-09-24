@@ -6,11 +6,26 @@ import {
   getCEOAutomationStatus
 } from "./ceoAutomationGuard.js";
 
+
 const DAILY_TARGET_VIDEOS = 5;
 
 const SCHEDULE_WINDOW_MINUTES = 15;
 
+
+/*
+|--------------------------------------------------------------------------
+| WORLDWIDE REGIONS
+|--------------------------------------------------------------------------
+|
+| 5 videos = daily target only.
+| It is NOT a hard maximum.
+|
+| Strong and safe topics can continue beyond 5.
+|--------------------------------------------------------------------------
+*/
+
 const REGIONS = Object.freeze({
+
   USA: {
     timezone: "America/New_York",
     hours: [9, 13, 18]
@@ -24,109 +39,187 @@ const REGIONS = Object.freeze({
   EUROPE: {
     timezone: "Europe/Paris",
     hours: [9, 13, 18]
+  },
+
+  MIDDLE_EAST: {
+    timezone: "Asia/Dubai",
+    hours: [9, 13, 18]
   }
+
 });
 
 
 function cleanText(value = "") {
+
   return String(value)
     .replace(/\s+/g, " ")
     .trim();
 }
 
 
-function getLocalParts(timezone, date = new Date()) {
-  const parts = new Intl.DateTimeFormat(
-    "en-GB",
-    {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23"
-    }
-  ).formatToParts(date);
+/*
+|--------------------------------------------------------------------------
+| GET LOCAL TIME PARTS
+|--------------------------------------------------------------------------
+*/
+
+function getLocalParts(
+  timezone,
+  date = new Date()
+) {
+
+  const parts =
+    new Intl.DateTimeFormat(
+      "en-GB",
+      {
+        timeZone: timezone,
+
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+
+        hourCycle: "h23"
+      }
+    ).formatToParts(date);
+
 
   const result = {};
 
+
   for (const part of parts) {
-    if (part.type !== "literal") {
-      result[part.type] = part.value;
+
+    if (
+      part.type !== "literal"
+    ) {
+
+      result[part.type] =
+        part.value;
     }
   }
 
+
   return {
-    year: Number(result.year),
-    month: Number(result.month),
-    day: Number(result.day),
-    hour: Number(result.hour),
-    minute: Number(result.minute),
-    second: Number(result.second)
+
+    year:
+      Number(result.year),
+
+    month:
+      Number(result.month),
+
+    day:
+      Number(result.day),
+
+    hour:
+      Number(result.hour),
+
+    minute:
+      Number(result.minute),
+
+    second:
+      Number(result.second)
+
   };
 }
 
+
+/*
+|--------------------------------------------------------------------------
+| CURRENT SCHEDULE SLOT
+|--------------------------------------------------------------------------
+*/
 
 function getCurrentScheduleSlot(
   region,
   date = new Date()
 ) {
-  const config = REGIONS[region];
+
+  const config =
+    REGIONS[region];
+
 
   if (!config) {
     return null;
   }
 
-  const local = getLocalParts(
-    config.timezone,
-    date
-  );
+
+  const local =
+    getLocalParts(
+      config.timezone,
+      date
+    );
+
 
   let selectedHour = null;
-  let selectedMinute = null;
 
-  for (const hour of config.hours) {
+
+  for (
+    const hour of config.hours
+  ) {
+
     const difference =
-      (local.hour - hour) * 60 +
+      (
+        local.hour -
+        hour
+      ) * 60 +
       local.minute;
+
 
     if (
       difference >= 0 &&
       difference < SCHEDULE_WINDOW_MINUTES
     ) {
-      selectedHour = hour;
-      selectedMinute = local.minute;
+
+      selectedHour =
+        hour;
 
       break;
     }
   }
 
-  if (selectedHour === null) {
+
+  if (
+    selectedHour === null
+  ) {
+
     return null;
   }
 
+
+  const localDate =
+    `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`;
+
+
+  const scheduleSlotId =
+    `${region}-${localDate}-${String(selectedHour).padStart(2, "0")}`;
+
+
+  const reservationKey =
+    `schedule:${region}:${localDate}-${String(selectedHour).padStart(2, "0")}`;
+
+
   return {
+
     region,
 
     timezone:
       config.timezone,
 
-    localDate:
-      `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`,
+    localDate,
 
     scheduledHour:
       selectedHour,
 
     currentMinute:
-      selectedMinute,
+      local.minute,
 
-    scheduleSlotId:
-      `${region}-${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}-${String(selectedHour).padStart(2, "0")}`,
+    scheduleSlotId,
 
-    reservationKey:
-      `schedule:${region}:${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}-${String(selectedHour).padStart(2, "0")}`
+    reservationKey
+
   };
 }
 
@@ -136,35 +229,47 @@ function getCurrentScheduleSlot(
 | SCHEDULE EVALUATION
 |--------------------------------------------------------------------------
 |
-| IMPORTANT:
+| Daily target = 5.
 |
-| DAILY_TARGET_VIDEOS = 5 is ONLY a target.
+| NOT a hard maximum.
 |
-| It does NOT stop automation after 5.
+| Examples:
 |
-| Example:
+| 2 good topics -> 2
+| 5 good topics -> 5
+| 8 good topics -> 8
 |
-| 2 good topics  -> system may publish 2
-| 5 good topics  -> system may publish 5
-| 8 good topics  -> system may continue beyond 5
-|
-| Quality, safety, copyright, duplicate and CEO gates
-| still control every individual video.
+| Weak/risky topics must never be generated
+| only to reach the target.
 |--------------------------------------------------------------------------
 */
 
 export async function evaluateSchedule({
+
   region,
-  date = new Date(),
-  requestedVideos = 1
+
+  date =
+    new Date(),
+
+  requestedVideos =
+    1
+
 } = {}) {
+
 
   const normalizedRegion =
     cleanText(region)
       .toUpperCase();
 
-  if (!REGIONS[normalizedRegion]) {
+
+  if (
+    !REGIONS[
+      normalizedRegion
+    ]
+  ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -172,9 +277,14 @@ export async function evaluateSchedule({
 
       region:
         normalizedRegion
+
     };
   }
 
+
+  /*
+   * CEO status check.
+   */
 
   const ceoStatus =
     await getCEOAutomationStatus();
@@ -183,7 +293,9 @@ export async function evaluateSchedule({
   if (
     ceoStatus.emergencyStop
   ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -195,6 +307,7 @@ export async function evaluateSchedule({
 
       region:
         normalizedRegion
+
     };
   }
 
@@ -203,7 +316,9 @@ export async function evaluateSchedule({
     ceoStatus.mode ===
     "STOP"
   ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -214,9 +329,14 @@ export async function evaluateSchedule({
 
       region:
         normalizedRegion
+
     };
   }
 
+
+  /*
+   * Check regional time window.
+   */
 
   const slot =
     getCurrentScheduleSlot(
@@ -226,7 +346,9 @@ export async function evaluateSchedule({
 
 
   if (!slot) {
+
     return {
+
       allowed: false,
 
       status:
@@ -244,18 +366,32 @@ export async function evaluateSchedule({
         REGIONS[
           normalizedRegion
         ].hours
+
     };
   }
 
 
+  /*
+   * Check automation start gate.
+   *
+   * This must not become a hard
+   * daily maximum.
+   */
+
   const startCheck =
     await canStartAutomation({
+
       requestedVideos
+
     });
 
 
-  if (!startCheck.allowed) {
+  if (
+    !startCheck.allowed
+  ) {
+
     return {
+
       allowed: false,
 
       status:
@@ -272,11 +408,13 @@ export async function evaluateSchedule({
 
       reservationKey:
         slot.reservationKey
+
     };
   }
 
 
   return {
+
     allowed: true,
 
     status:
@@ -294,6 +432,9 @@ export async function evaluateSchedule({
     scheduledHour:
       slot.scheduledHour,
 
+    currentMinute:
+      slot.currentMinute,
+
     scheduleSlotId:
       slot.scheduleSlotId,
 
@@ -304,7 +445,10 @@ export async function evaluateSchedule({
       DAILY_TARGET_VIDEOS,
 
     startedToday:
-      startCheck.startedToday,
+      Number(
+        startCheck.startedToday ||
+        0
+      ),
 
     targetReached:
       Boolean(
@@ -313,17 +457,25 @@ export async function evaluateSchedule({
 
     overTarget:
       Number(
-        startCheck.overTarget || 0
+        startCheck.overTarget ||
+        0
       ),
 
     /*
-     * TRUE means the system is allowed
-     * to continue beyond 5 if more
-     * genuinely good topics are available.
+     * IMPORTANT:
+     *
+     * 5 is only the target.
      */
 
+    hardDailyMaximum:
+      false,
+
     canContinueBeyondTarget:
+      true,
+
+    qualityOverQuantity:
       true
+
   };
 }
 
@@ -333,18 +485,25 @@ export async function evaluateSchedule({
 | RESERVE SCHEDULED RUN
 |--------------------------------------------------------------------------
 |
-| This protects the SAME schedule slot
-| from being executed twice.
+| Prevents the SAME schedule slot from
+| running twice.
 |
-| It is NOT a 5-video limit.
+| This is NOT a daily 5-video limit.
 |--------------------------------------------------------------------------
 */
 
 export async function reserveScheduledRun({
+
   region,
-  runId = null,
-  date = new Date()
+
+  runId =
+    null,
+
+  date =
+    new Date()
+
 } = {}) {
+
 
   const normalizedRegion =
     cleanText(region)
@@ -353,20 +512,26 @@ export async function reserveScheduledRun({
 
   const evaluation =
     await evaluateSchedule({
+
       region:
         normalizedRegion,
 
       date
+
     });
 
 
-  if (!evaluation.allowed) {
+  if (
+    !evaluation.allowed
+  ) {
+
     return evaluation;
   }
 
 
   const reservation =
     await reserveDailySlot({
+
       reservationKey:
         evaluation.reservationKey,
 
@@ -376,10 +541,12 @@ export async function reserveScheduledRun({
       runId:
         runId ||
         `scheduled-${Date.now()}`
+
     });
 
 
   return {
+
     ...reservation,
 
     region:
@@ -394,8 +561,15 @@ export async function reserveScheduledRun({
     dailyTarget:
       DAILY_TARGET_VIDEOS,
 
+    hardDailyMaximum:
+      false,
+
     canContinueBeyondTarget:
+      true,
+
+    qualityOverQuantity:
       true
+
   };
 }
 
@@ -416,13 +590,13 @@ export async function getSchedulerStatus() {
 
 
   for (
-    const region of Object.keys(
-      REGIONS
-    )
+    const region
+      of Object.keys(REGIONS)
   ) {
 
     const config =
       REGIONS[region];
+
 
     const local =
       getLocalParts(
@@ -431,6 +605,7 @@ export async function getSchedulerStatus() {
 
 
     regions[region] = {
+
       timezone:
         config.timezone,
 
@@ -442,17 +617,20 @@ export async function getSchedulerStatus() {
 
       scheduleHours:
         config.hours
+
     };
   }
 
 
   const startedToday =
     Number(
-      ceoStatus.daily?.started || 0
+      ceoStatus.daily?.started ||
+      0
     );
 
 
   return {
+
     success: true,
 
     scheduler:
@@ -460,10 +638,6 @@ export async function getSchedulerStatus() {
 
     dailyTarget:
       DAILY_TARGET_VIDEOS,
-
-    /*
-     * No hard maximum.
-     */
 
     hardDailyMaximum:
       false,
@@ -480,8 +654,9 @@ export async function getSchedulerStatus() {
     overTarget:
       Math.max(
         0,
+
         startedToday -
-          DAILY_TARGET_VIDEOS
+        DAILY_TARGET_VIDEOS
       ),
 
     canContinueBeyondTarget:
@@ -493,30 +668,41 @@ export async function getSchedulerStatus() {
     regions,
 
     ceo: {
+
       mode:
         ceoStatus.mode,
 
       emergencyStop:
-        ceoStatus.emergencyStop
+        ceoStatus.emergencyStop,
+
+      emergencyStopReason:
+        ceoStatus.emergencyStopReason ||
+        null
+
     }
+
   };
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| SCHEDULE CONFIG
+| SCHEDULER CONFIG
 |--------------------------------------------------------------------------
 */
 
 export function getSchedulerConfig() {
 
   return {
+
     dailyTarget:
       DAILY_TARGET_VIDEOS,
 
     hardDailyMaximum:
       false,
+
+    maximumVideosPerDay:
+      null,
 
     scheduleWindowMinutes:
       SCHEDULE_WINDOW_MINUTES,
@@ -529,47 +715,82 @@ export function getSchedulerConfig() {
 
     regions:
       REGIONS
+
   };
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| HELPERS
+| SUPPORTED REGIONS
 |--------------------------------------------------------------------------
 */
 
 export function getSupportedRegions() {
+
   return Object.keys(
     REGIONS
   );
 }
 
 
+/*
+|--------------------------------------------------------------------------
+| CHECK SUPPORTED REGION
+|--------------------------------------------------------------------------
+*/
+
 export function isSupportedRegion(
   region
 ) {
+
   return Boolean(
+
     REGIONS[
       cleanText(region)
         .toUpperCase()
     ]
+
   );
 }
 
+
+/*
+|--------------------------------------------------------------------------
+| GET REGION CONFIG
+|--------------------------------------------------------------------------
+*/
 
 export function getRegionConfig(
   region
 ) {
+
   const normalized =
     cleanText(region)
       .toUpperCase();
 
+
   return (
-    REGIONS[normalized] ||
+
+    REGIONS[
+      normalized
+    ] ||
+
     null
+
   );
 }
+
+
+/*
+|--------------------------------------------------------------------------
+| GET CURRENT SLOT
+|--------------------------------------------------------------------------
+*/
+
+export {
+  getCurrentScheduleSlot
+};
 
 
 /*
@@ -595,4 +816,5 @@ export default {
   getRegionConfig,
 
   getCurrentScheduleSlot
+
 };
