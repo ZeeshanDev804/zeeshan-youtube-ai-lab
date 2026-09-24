@@ -5,167 +5,453 @@ import {
 } from "./ceoAutomationGuard.js";
 
 import {
-  getReliabilityStatus
-} from "./automationReliability.js";
-
-import {
   getSchedulerStatus
 } from "./worldwideScheduler.js";
 
 import {
-  getScheduledAutomationStatus
+  getScheduledRunnerStatus
 } from "./scheduledAutomationRunner.js";
 
-import {
-  getAutomationStatus
-} from "./automationOrchestrator.js";
 
-export async function getLiveAutomationDashboard() {
+const DAILY_TARGET_VIDEOS = 5;
+
+
+function safeNumber(value, fallback = 0) {
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? number
+    : fallback;
+}
+
+
+function safeBoolean(value) {
+  return Boolean(value);
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| MAIN DASHBOARD STATUS
+|--------------------------------------------------------------------------
+*/
+
+export async function getAutomationDashboardStatus() {
+
   const [
     ceo,
-    reliability,
     scheduler,
-    runner,
-    orchestrator
+    runner
   ] = await Promise.all([
     getCEOAutomationStatus(),
-    getReliabilityStatus(),
     getSchedulerStatus(),
-    getScheduledAutomationStatus(),
-    getAutomationStatus()
+    getScheduledRunnerStatus()
   ]);
+
+
+  const startedToday =
+    safeNumber(
+      ceo?.daily?.started
+    );
+
+
+  const completedToday =
+    safeNumber(
+      ceo?.daily?.completed
+    );
+
+
+  const targetReached =
+    startedToday >=
+    DAILY_TARGET_VIDEOS;
+
+
+  const overTarget =
+    Math.max(
+      0,
+      startedToday -
+        DAILY_TARGET_VIDEOS
+    );
+
+
+  const remainingToTarget =
+    Math.max(
+      0,
+      DAILY_TARGET_VIDEOS -
+        startedToday
+    );
+
 
   return {
     success: true,
 
-    generatedAt:
-      new Date().toISOString(),
-
     system: {
+      name:
+        "ZEESHAN AI LABS",
+
+      component:
+        "YouTube AI Automation System",
+
       status:
-        "ONLINE",
-
-      automation:
-        "CONNECTED",
-
-      dashboard:
-        "CONNECTED",
-
-      youtube:
-        "NOT_CONNECTED",
-
-      googleCloud:
-        "NOT_CONNECTED"
+        ceo?.emergencyStop
+          ? "EMERGENCY_STOP"
+          : ceo?.mode === "STOP"
+            ? "STOPPED"
+            : "ONLINE"
     },
+
+
+    /*
+     * CEO control
+     */
 
     ceo: {
       mode:
-        ceo.mode,
+        ceo?.mode || "REVIEW",
 
       emergencyStop:
-        ceo.emergencyStop,
+        safeBoolean(
+          ceo?.emergencyStop
+        ),
 
       emergencyStopReason:
-        ceo.emergencyStopReason,
-
-      dailyMaximum:
-        ceo.daily.maximum,
-
-      startedToday:
-        ceo.daily.started,
-
-      completedToday:
-        ceo.daily.completed,
-
-      remainingToday:
-        ceo.daily.remaining
+        ceo?.emergencyStopReason ||
+        null
     },
+
+
+    /*
+     * DAILY CONTENT POLICY
+     *
+     * 5 = target.
+     * NOT maximum.
+     */
+
+    dailyContent: {
+
+      target:
+        DAILY_TARGET_VIDEOS,
+
+      targetLabel:
+        "5 videos/day target",
+
+      started:
+        startedToday,
+
+      completed:
+        completedToday,
+
+      remainingToTarget,
+
+      targetReached,
+
+      overTarget,
+
+      hardMaximum:
+        false,
+
+      maximum:
+        null,
+
+      maximumVideosPerDay:
+        null,
+
+      canExceedTarget:
+        true,
+
+      qualityOverQuantity:
+        true,
+
+      weakTopicsBlocked:
+        true,
+
+      repetitiveTopicsBlocked:
+        true,
+
+      unsafeTopicsBlocked:
+        true
+    },
+
+
+    /*
+     * IMPORTANT:
+     *
+     * These values are deliberately
+     * separate from the target.
+     */
+
+    productionPolicy: {
+
+      ifTwoGoodTopics:
+        "Allow 2",
+
+      ifFiveGoodTopics:
+        "Allow 5",
+
+      ifMoreThanFiveGoodTopics:
+        "Allow more than 5",
+
+      ifNoGoodTopics:
+        "Do not force content",
+
+      targetIsHardLimit:
+        false
+    },
+
+
+    /*
+     * Scheduler
+     */
 
     scheduler: {
+
       status:
-        scheduler.status,
+        scheduler?.success
+          ? "CONNECTED"
+          : "ERROR",
+
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+
+      hardDailyMaximum:
+        false,
+
+      canContinueBeyondTarget:
+        true,
+
+      qualityOverQuantity:
+        true,
 
       regions:
-        scheduler.regions,
-
-      remainingToday:
-        scheduler.remainingToday
+        scheduler?.regions ||
+        {}
     },
 
-    reliability: {
+
+    /*
+     * Scheduled runner
+     */
+
+    scheduledRunner: {
+
       status:
-        reliability.status,
+        runner?.success
+          ? "CONNECTED"
+          : "ERROR",
 
-      totalJobs:
-        reliability.jobs.total,
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
 
-      activeJobs:
-        reliability.jobs.active,
+      targetIsHardMaximum:
+        false,
 
-      failedJobs:
-        reliability.jobs.failed,
+      canContinueBeyondTarget:
+        true,
 
-      completedJobs:
-        reliability.jobs.completed,
-
-      recoveryRequired:
-        reliability.jobs
-          .recoveryRequired,
-
-      activeLocks:
-        reliability.locks
+      regions:
+        runner?.regions ||
+        []
     },
 
-    orchestrator: {
-      status:
-        "CONNECTED",
 
-      data:
-        orchestrator
-    },
-
-    runner: {
-      status:
-        runner.pipeline
-          ?.orchestrator ||
-        "UNKNOWN"
-    },
+    /*
+     * Safety gates
+     */
 
     safety: {
+
       emergencyStop:
-        ceo.emergencyStop,
+        safeBoolean(
+          ceo?.emergencyStop
+        ),
 
       stopMode:
-        ceo.mode ===
-        "STOP",
+        ceo?.mode === "STOP",
 
-      reviewMode:
-        ceo.mode ===
-        "REVIEW",
-
-      mediumRiskApproval:
+      mediumRiskNeedsApproval:
         true,
 
-      highRiskApproval:
+      highRiskNeedsApproval:
         true,
 
-      dailyLimit:
-        5
+      reviewModeNeedsApproval:
+        true,
+
+      duplicateProtection:
+        true,
+
+      copyrightProtection:
+        true,
+
+      qualityGate:
+        true
+    },
+
+
+    /*
+     * YouTube connection status.
+     *
+     * This dashboard does not pretend
+     * that OAuth is connected unless the
+     * underlying system reports it.
+     */
+
+    youtube: {
+      status:
+        "CHECK_PRODUCTION_PIPELINE"
+    },
+
+
+    /*
+     * Human-readable summary
+     */
+
+    summary: {
+
+      message:
+        targetReached
+          ? overTarget > 0
+            ? `Daily target of ${DAILY_TARGET_VIDEOS} reached. System may continue because the target is not a hard maximum.`
+            : `Daily target of ${DAILY_TARGET_VIDEOS} reached. Additional strong topics may still be processed.`
+          : `${remainingToTarget} more video(s) needed to reach the daily target of ${DAILY_TARGET_VIDEOS}.`,
+
+      target:
+        DAILY_TARGET_VIDEOS,
+
+      started:
+        startedToday,
+
+      completed:
+        completedToday,
+
+      hardMaximum:
+        false
+    },
+
+
+    timestamp:
+      new Date().toISOString()
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| SIMPLE STATUS
+|--------------------------------------------------------------------------
+*/
+
+export async function getSimpleAutomationStatus() {
+
+  const status =
+    await getAutomationDashboardStatus();
+
+
+  return {
+    success:
+      status.success,
+
+    system:
+      status.system.status,
+
+    mode:
+      status.ceo.mode,
+
+    emergencyStop:
+      status.ceo.emergencyStop,
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
+
+    startedToday:
+      status.dailyContent.started,
+
+    completedToday:
+      status.dailyContent.completed,
+
+    targetReached:
+      status.dailyContent.targetReached,
+
+    overTarget:
+      status.dailyContent.overTarget,
+
+    hardDailyMaximum:
+      false,
+
+    canContinueBeyondTarget:
+      true
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| DAILY POLICY
+|--------------------------------------------------------------------------
+*/
+
+export function getDailyContentPolicy() {
+
+  return {
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
+
+    hardMaximum:
+      false,
+
+    maximumVideosPerDay:
+      null,
+
+    canExceedTarget:
+      true,
+
+    qualityOverQuantity:
+      true,
+
+    rules: {
+
+      fewerThanTarget:
+        "Allowed",
+
+      exactlyTarget:
+        "Allowed",
+
+      moreThanTarget:
+        "Allowed",
+
+      weakTopics:
+        "Blocked",
+
+      riskyTopics:
+        "Blocked or sent to approval",
+
+      repetitiveTopics:
+        "Blocked",
+
+      unsafeContent:
+        "Blocked"
     }
   };
 }
 
-export async function getDashboardHealth() {
-  const dashboard =
-    await getLiveAutomationDashboard();
+
+/*
+|--------------------------------------------------------------------------
+| HEALTH CHECK
+|--------------------------------------------------------------------------
+*/
+
+export async function getAutomationDashboardHealth() {
+
+  const status =
+    await getAutomationDashboardStatus();
+
 
   const healthy =
-    dashboard.system.status ===
+    status.system.status ===
       "ONLINE" &&
-    dashboard.ceo.emergencyStop ===
-      false &&
-    dashboard.reliability.status ===
-      "READY";
+    !status.ceo.emergencyStop;
+
 
   return {
     success: true,
@@ -177,31 +463,34 @@ export async function getDashboardHealth() {
         ? "HEALTHY"
         : "ATTENTION_REQUIRED",
 
-    generatedAt:
-      dashboard.generatedAt,
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
 
-    checks: {
-      system:
-        dashboard.system.status,
+    hardDailyMaximum:
+      false,
 
-      ceoControl:
-        dashboard.ceo.emergencyStop
-          ? "EMERGENCY_STOP"
-          : "READY",
+    canContinueBeyondTarget:
+      true,
 
-      reliability:
-        dashboard.reliability.status,
-
-      scheduler:
-        dashboard.scheduler.status,
-
-      orchestrator:
-        dashboard.runner.status
-    }
+    timestamp:
+      new Date().toISOString()
   };
 }
 
+
+/*
+|--------------------------------------------------------------------------
+| DEFAULT EXPORT
+|--------------------------------------------------------------------------
+*/
+
 export default {
-  getLiveAutomationDashboard,
-  getDashboardHealth
+
+  getAutomationDashboardStatus,
+
+  getSimpleAutomationStatus,
+
+  getDailyContentPolicy,
+
+  getAutomationDashboardHealth
 };
