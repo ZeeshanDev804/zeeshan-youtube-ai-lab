@@ -246,17 +246,27 @@ function validateUploadJob({
   };
 }
 
+/*
+ * FINAL PUBLISH AUTHORIZATION
+ *
+ * IMPORTANT:
+ * The uploader NEVER assumes permission.
+ *
+ * Required architecture:
+ *
+ * Upload Guard
+ *      ↓
+ * Publish Gate
+ *      ↓
+ * Explicit authorization
+ *      ↓
+ * YouTube
+ *
+ * Missing publish decision = BLOCK.
+ */
 function validatePublishAuthorization(
   job = {}
 ) {
-  /*
-   * Final publishing authorization must come
-   * from publishGate.js.
-   *
-   * The uploader itself does not create
-   * CEO approval decisions.
-   */
-
   const authorization =
     job.publishDecision ||
     job.publishAuthorization ||
@@ -264,40 +274,102 @@ function validatePublishAuthorization(
 
   if (!authorization) {
     return {
-      allowed: true,
+      allowed: false,
+
       reason:
-        "No separate publish decision object was supplied; Upload Guard authorization will be enforced."
+        "YouTube publish authorization is missing. Publish Gate must explicitly authorize the upload."
     };
   }
 
   if (
-    authorization.allowed !== true ||
-    authorization.success !== true
+    authorization.allowed !== true
   ) {
     return {
       allowed: false,
+
       reason:
         authorization.reason ||
-        "YouTube publish gate has not authorized this upload."
+        "YouTube Publish Gate has not authorized this upload."
+    };
+  }
+
+  const status =
+    String(
+      authorization.status ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
+  const validAuthorizationStatuses = [
+    "PUBLISH_AUTHORIZED",
+    "AUTHORIZED",
+    "AUTO_PUBLISH_AUTHORIZED",
+    "CEO_APPROVED",
+    "CEO_APPROVAL_GRANTED"
+  ];
+
+  /*
+   * Some existing Publish Gate responses
+   * may use allowed=true without a status.
+   *
+   * Do NOT accept an empty status automatically.
+   * An explicit success flag is required.
+   */
+  const explicitSuccess =
+    authorization.success === true ||
+    validAuthorizationStatuses.includes(
+      status
+    );
+
+  if (!explicitSuccess) {
+    return {
+      allowed: false,
+
+      reason:
+        "Publish Gate authorization is not explicitly confirmed."
+    };
+  }
+
+  /*
+   * CEO review is not authorization.
+   */
+  const reviewStatuses = [
+    "CEO_REVIEW",
+    "CEO_APPROVAL_REQUIRED",
+    "PENDING_CEO_APPROVAL",
+    "REVIEW_REQUIRED"
+  ];
+
+  if (
+    reviewStatuses.includes(
+      status
+    )
+  ) {
+    return {
+      allowed: false,
+
+      reason:
+        "CEO approval is still required before YouTube upload."
     };
   }
 
   return {
     allowed: true,
+
     reason:
-      "YouTube publish gate authorized the upload."
+      "YouTube Publish Gate explicitly authorized the upload.",
+
+    status
   };
 }
 
 function createUploadStream(
   videoPath
 ) {
-  const stream =
-    fs.createReadStream(
-      videoPath
-    );
-
-  return stream;
+  return fs.createReadStream(
+    videoPath
+  );
 }
 
 function normalizeYouTubeError(
@@ -352,69 +424,17 @@ export async function uploadToYouTube(
 ) {
   /*
    * ------------------------------------------------
-   * 1. UPLOAD GUARD
+   * 1. EMERGENCY STOP / STOP MODE
    * ------------------------------------------------
-   */
-
-  const guardAuthorization =
-    canUploadFromGuard(
-      job.uploadJob ||
-      job
-    );
-
-  if (
-    !guardAuthorization.allowed
-  ) {
-    return {
-      uploaded: false,
-
-      status:
-        "UPLOAD_BLOCKED",
-
-      message:
-        guardAuthorization.reason,
-
-      job
-    };
-  }
-
-  /*
-   * ------------------------------------------------
-   * 2. FINAL PUBLISH GATE
-   * ------------------------------------------------
-   */
-
-  const publishAuthorization =
-    validatePublishAuthorization(
-      job
-    );
-
-  if (
-    !publishAuthorization.allowed
-  ) {
-    return {
-      uploaded: false,
-
-      status:
-        "PUBLISH_GATE_BLOCKED",
-
-      message:
-        publishAuthorization.reason,
-
-      job
-    };
-  }
-
-  /*
-   * ------------------------------------------------
-   * 3. EMERGENCY STOP
-   * ------------------------------------------------
+   *
+   * Check before any external upload operation.
    */
 
   if (
-    config.system.emergencyStop === true ||
+    config?.system?.emergencyStop === true ||
     String(
-      config.system.mode
+      config?.system?.mode ||
+      ""
     ).toUpperCase() === "STOP"
   ) {
     return {
@@ -425,6 +445,67 @@ export async function uploadToYouTube(
 
       message:
         "YouTube upload was stopped by the system safety control.",
+
+      job
+    };
+  }
+
+  /*
+   * ------------------------------------------------
+   * 2. UPLOAD GUARD
+   * ------------------------------------------------
+   */
+
+  const guardAuthorization =
+    canUploadFromGuard(
+      job.uploadJob ||
+      job
+    );
+
+  if (
+    !guardAuthorization ||
+    guardAuthorization.allowed !== true
+  ) {
+    return {
+      uploaded: false,
+
+      status:
+        "UPLOAD_BLOCKED",
+
+      message:
+        guardAuthorization?.reason ||
+        "Upload Guard has not authorized this upload.",
+
+      job
+    };
+  }
+
+  /*
+   * ------------------------------------------------
+   * 3. FINAL PUBLISH GATE
+   * ------------------------------------------------
+   *
+   * There is NO fallback authorization.
+   *
+   * Missing publishDecision = BLOCK.
+   */
+
+  const publishAuthorization =
+    validatePublishAuthorization(
+      job
+    );
+
+  if (
+    publishAuthorization.allowed !== true
+  ) {
+    return {
+      uploaded: false,
+
+      status:
+        "PUBLISH_GATE_BLOCKED",
+
+      message:
+        publishAuthorization.reason,
 
       job
     };
@@ -487,7 +568,7 @@ export async function uploadToYouTube(
       categoryId:
         metadata.categoryId ||
         job.categoryId ||
-        config.youtube.categoryId ||
+        config?.youtube?.categoryId ||
         "22"
     });
 
@@ -585,10 +666,6 @@ export async function uploadToYouTube(
             uploadStream
         },
 
-        /*
-         * Explicit resumable upload.
-         * googleapis handles the upload session.
-         */
         resumable: true
       });
 
@@ -635,6 +712,13 @@ export async function uploadToYouTube(
 
         categoryId:
           validation.categoryId
+      },
+
+      publishAuthorization: {
+        status:
+          publishAuthorization.status,
+
+        authorized: true
       },
 
       uploadedAt:
