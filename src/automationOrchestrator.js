@@ -35,7 +35,8 @@ const LOG_FILE = path.join(
   "automation-log.jsonl"
 );
 
-const MAX_DAILY_VIDEOS = 5;
+// 5 is a TARGET, not a hard maximum.
+const DAILY_TARGET_VIDEOS = 5;
 const MAX_STAGE_RETRIES = 2;
 
 function cleanText(value = "") {
@@ -171,18 +172,42 @@ function getDailyLimitStatus(state) {
     state.dailyCount || 0
   );
 
+  const remainingToTarget =
+    Math.max(
+      0,
+      DAILY_TARGET_VIDEOS - used
+    );
+
   return {
-    limit: MAX_DAILY_VIDEOS,
+    target:
+      DAILY_TARGET_VIDEOS,
+
+    dailyTargetVideos:
+      DAILY_TARGET_VIDEOS,
 
     used,
 
-    remaining: Math.max(
-      0,
-      MAX_DAILY_VIDEOS - used
-    ),
+    remainingToTarget,
 
-    reached:
-      used >= MAX_DAILY_VIDEOS
+    targetReached:
+      used >= DAILY_TARGET_VIDEOS,
+
+    overTarget:
+      used > DAILY_TARGET_VIDEOS,
+
+    hardDailyMaximum:
+      false,
+
+    maxDailyVideos:
+      null,
+
+    canContinueBeyondTarget:
+      true,
+
+    message:
+      used >= DAILY_TARGET_VIDEOS
+        ? "Daily target reached. Automation may continue if strong, safe and eligible topics remain."
+        : `${remainingToTarget} more video(s) needed to reach the daily target.`
   };
 }
 
@@ -679,7 +704,6 @@ function createManifest({
       cleanText(script),
 
     production:
-
       production || null,
 
     createdAt:
@@ -791,33 +815,20 @@ export async function runAutomation({
       state
     );
 
-  const limit =
+  /*
+   * IMPORTANT:
+   * DAILY_TARGET_VIDEOS is informational only.
+   * There is NO hard daily maximum.
+   *
+   * The automation can continue beyond 5
+   * when additional topics are strong,
+   * original, safe, researched and eligible.
+   */
+
+  const dailyTarget =
     getDailyLimitStatus(
       state
     );
-
-  if (
-    limit.reached
-  ) {
-    await appendLog({
-      runId,
-
-      status:
-        "DAILY_LIMIT_REACHED"
-    });
-
-    return {
-      success: false,
-
-      status:
-        "DAILY_LIMIT_REACHED",
-
-      runId,
-
-      dailyLimit:
-        limit
-    };
-  }
 
   let systemStatus;
 
@@ -866,7 +877,10 @@ export async function runAutomation({
 
       runId,
 
-      systemStatus
+      systemStatus,
+
+      dailyLimit:
+        dailyTarget
     };
   }
 
@@ -885,7 +899,13 @@ export async function runAutomation({
       explicitTopic || null,
 
     dryRun:
-      Boolean(dryRun)
+      Boolean(dryRun),
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
+
+    hardDailyMaximum:
+      false
   });
 
   /*
@@ -1580,15 +1600,6 @@ export async function runAutomation({
   /*
    * =========================================================
    * 9. FINAL SHORT PRODUCTION
-   *
-   * LOW:
-   * Production continues automatically.
-   *
-   * MEDIUM:
-   * Production is completed first, then CEO approval.
-   *
-   * HIGH:
-   * Already blocked by safety/duplicate gates.
    * =========================================================
    */
 
@@ -1812,9 +1823,6 @@ export async function runAutomation({
   /*
    * =========================================================
    * 13. CEO APPROVAL GATE
-   *
-   * IMPORTANT:
-   * CEO receives the completed final MP4 + QA result.
    * =========================================================
    */
 
@@ -2043,7 +2051,13 @@ export async function runAutomation({
     finalVideoFile,
 
     dailyCount:
-      state.dailyCount
+      state.dailyCount,
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
+
+    hardDailyMaximum:
+      false
   });
 
   return {
@@ -2164,8 +2178,17 @@ export async function getAutomationStatus() {
     automation: {
       canRun,
 
+      dailyTargetVideos:
+        DAILY_TARGET_VIDEOS,
+
       maxDailyVideos:
-        MAX_DAILY_VIDEOS,
+        null,
+
+      hardDailyMaximum:
+        false,
+
+      canContinueBeyondTarget:
+        true,
 
       retriesPerStage:
         MAX_STAGE_RETRIES
@@ -2204,7 +2227,7 @@ export async function getAutomationStatus() {
       "SEPARATE_YOUTUBE_PIPELINE",
 
     message:
-      "Automation orchestrator is ready. Maximum five Shorts per day. Final video must pass QA and remains behind dedicated YouTube upload and CEO safety gates."
+      "Automation orchestrator is ready. Five Shorts per day is the target, not a hard maximum. Additional strong, original and safe topics may continue beyond the target. Final video must pass QA and remains behind dedicated YouTube upload and CEO safety gates."
   };
 }
 
