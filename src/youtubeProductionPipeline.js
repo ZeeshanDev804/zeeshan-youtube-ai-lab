@@ -10,6 +10,11 @@ import {
   evaluateYouTubePublish
 } from "./youtubePublishGate.js";
 
+import {
+  uploadVideoToYouTube,
+  getYouTubeOAuthStatus
+} from "./youtubeOAuthUploader.js";
+
 function cleanText(value = "") {
   return String(value)
     .replace(/\s+/g, " ")
@@ -22,7 +27,9 @@ function normalizeTags(tags = []) {
   }
 
   return tags
-    .map((tag) => cleanText(tag))
+    .map((tag) =>
+      cleanText(tag)
+    )
     .filter(Boolean)
     .slice(0, 30);
 }
@@ -44,7 +51,8 @@ export async function prepareShortForYouTube({
   if (!manifest) {
     return {
       success: false,
-      status: "MANIFEST_REQUIRED",
+      status:
+        "MANIFEST_REQUIRED",
       error:
         "Production manifest is required."
     };
@@ -53,11 +61,18 @@ export async function prepareShortForYouTube({
   if (!videoFile) {
     return {
       success: false,
-      status: "VIDEO_FILE_REQUIRED",
+      status:
+        "VIDEO_FILE_REQUIRED",
       error:
         "Final video file is required."
     };
   }
+
+  /*
+   * --------------------------------------------------
+   * 1. FINAL VIDEO QA
+   * --------------------------------------------------
+   */
 
   const qa =
     await checkFinalShortQuality({
@@ -66,45 +81,69 @@ export async function prepareShortForYouTube({
         videoFile
     });
 
-  if (!qa.passed) {
+  if (
+    !qa ||
+    qa.passed !== true
+  ) {
     return {
       success: false,
-      status: "QA_BLOCKED",
+      status:
+        "QA_BLOCKED",
       qa
     };
   }
+
+  /*
+   * --------------------------------------------------
+   * 2. CREATE YOUTUBE UPLOAD JOB
+   * --------------------------------------------------
+   */
 
   const uploadJob =
     createYouTubeUploadJob({
       manifest,
       qaResult: qa,
       videoFile,
+
       title:
         cleanText(
           title ||
           manifest?.metadata?.title ||
           ""
         ),
+
       description:
         cleanText(
           description ||
           manifest?.metadata?.description ||
           ""
         ),
+
       tags:
         normalizeTags(tags),
+
       privacyStatus,
       categoryId
     });
 
-  if (!uploadJob.success) {
+  if (
+    !uploadJob ||
+    uploadJob.success !== true
+  ) {
     return {
       success: false,
-      status: "UPLOAD_JOB_BLOCKED",
+      status:
+        "UPLOAD_JOB_BLOCKED",
       qa,
       uploadJob
     };
   }
+
+  /*
+   * --------------------------------------------------
+   * 3. CEO / RISK PUBLISH GATE
+   * --------------------------------------------------
+   */
 
   const publishDecision =
     evaluateYouTubePublish({
@@ -113,12 +152,154 @@ export async function prepareShortForYouTube({
       requiresCEOApproval
     });
 
+  /*
+   * IMPORTANT:
+   * Never upload unless the publish gate
+   * explicitly authorizes publishing.
+   */
+
+  if (
+    !publishDecision ||
+    publishDecision.allowed !== true
+  ) {
+    return {
+      success: false,
+      status:
+        publishDecision?.status ||
+        "PUBLISH_BLOCKED",
+
+      qa,
+
+      uploadJob,
+
+      publishDecision,
+
+      videoFile,
+
+      uploaded: false,
+
+      createdAt:
+        new Date().toISOString()
+    };
+  }
+
+  /*
+   * --------------------------------------------------
+   * 4. CHECK YOUTUBE OAUTH
+   * --------------------------------------------------
+   */
+
+  const oauthStatus =
+    getYouTubeOAuthStatus();
+
+  if (
+    !oauthStatus.configured
+  ) {
+    return {
+      success: false,
+      status:
+        "YOUTUBE_OAUTH_NOT_CONFIGURED",
+
+      qa,
+
+      uploadJob,
+
+      publishDecision,
+
+      oauthStatus,
+
+      videoFile,
+
+      uploaded: false,
+
+      message:
+        "YouTube OAuth credentials are required before the video can be uploaded."
+    };
+  }
+
+  /*
+   * --------------------------------------------------
+   * 5. ACTUAL YOUTUBE UPLOAD
+   * --------------------------------------------------
+   */
+
+  const upload =
+    await uploadVideoToYouTube({
+      videoFile,
+
+      title:
+        cleanText(
+          title ||
+          manifest?.metadata?.title ||
+          uploadJob?.title ||
+          ""
+        ),
+
+      description:
+        cleanText(
+          description ||
+          manifest?.metadata?.description ||
+          uploadJob?.description ||
+          ""
+        ),
+
+      tags:
+        normalizeTags(
+          tags.length
+            ? tags
+            : uploadJob?.tags || []
+        ),
+
+      categoryId:
+        categoryId ||
+        uploadJob?.categoryId ||
+        "22",
+
+      privacyStatus:
+        privacyStatus ||
+        uploadJob?.privacyStatus ||
+        "private"
+    });
+
+  if (
+    !upload ||
+    upload.success !== true
+  ) {
+    return {
+      success: false,
+      status:
+        "YOUTUBE_UPLOAD_FAILED",
+
+      qa,
+
+      uploadJob,
+
+      publishDecision,
+
+      oauthStatus,
+
+      upload,
+
+      videoFile,
+
+      uploaded: false,
+
+      createdAt:
+        new Date().toISOString()
+    };
+  }
+
+  /*
+   * --------------------------------------------------
+   * 6. FINAL SUCCESS
+   * --------------------------------------------------
+   */
+
   return {
-    success:
-      publishDecision.allowed === true,
+    success: true,
 
     status:
-      publishDecision.status,
+      "YOUTUBE_UPLOAD_COMPLETED",
 
     qa,
 
@@ -126,7 +307,37 @@ export async function prepareShortForYouTube({
 
     publishDecision,
 
+    oauthStatus,
+
+    upload: {
+      success:
+        upload.success,
+
+      status:
+        upload.status,
+
+      videoId:
+        upload.videoId,
+
+      privacyStatus:
+        upload.privacyStatus,
+
+      title:
+        upload.title,
+
+      uploadedFile:
+        upload.uploadedFile,
+
+      uploadedAt:
+        upload.uploadedAt
+    },
+
     videoFile,
+
+    uploaded: true,
+
+    nextStage:
+      "ANALYTICS",
 
     createdAt:
       new Date().toISOString()
@@ -134,10 +345,14 @@ export async function prepareShortForYouTube({
 }
 
 export function getYouTubeProductionStatus() {
+  const oauth =
+    getYouTubeOAuthStatus();
+
   return {
     configured: true,
 
-    status: "READY",
+    status:
+      "READY",
 
     stages: [
       "FINAL_VIDEO",
@@ -145,7 +360,10 @@ export function getYouTubeProductionStatus() {
       "UPLOAD_VALIDATION",
       "RISK_CHECK",
       "CEO_APPROVAL",
-      "YOUTUBE_UPLOAD"
+      "OAUTH_VALIDATION",
+      "YOUTUBE_UPLOAD",
+      "UPLOAD_RESULT",
+      "ANALYTICS"
     ],
 
     defaultPrivacy:
@@ -160,7 +378,20 @@ export function getYouTubeProductionStatus() {
     lowRisk:
       "CEO_AUTO_PUBLISH_POLICY",
 
+    oauthStatus:
+      oauth.status,
+
+    youtubeUpload:
+      oauth.configured
+        ? "CONFIGURED"
+        : "NOT_CONFIGURED",
+
     message:
-      "YouTube production pipeline is protected by QA and CEO publishing controls."
+      "Final Shorts pass QA and CEO publishing gates before the real YouTube OAuth uploader is allowed to upload."
   };
 }
+
+export default {
+  prepareShortForYouTube,
+  getYouTubeProductionStatus
+};
