@@ -106,6 +106,28 @@ function validateUploadInput({
   };
 }
 
+function validatePublishAuthorization({
+  publishDecision
+} = {}) {
+  if (
+    publishDecision?.allowed !== true
+  ) {
+    return {
+      authorized: false,
+      status:
+        "PUBLISH_NOT_AUTHORIZED",
+      error:
+        "YouTube upload requires explicit Publish Gate authorization."
+    };
+  }
+
+  return {
+    authorized: true,
+    status:
+      "PUBLISH_AUTHORIZED"
+  };
+}
+
 async function getAccessToken() {
   const config =
     getConfig();
@@ -188,8 +210,24 @@ export async function uploadVideoToYouTube({
   description = "",
   tags = [],
   categoryId = "22",
-  privacyStatus
+  privacyStatus,
+  publishDecision
 } = {}) {
+  const authorization =
+    validatePublishAuthorization({
+      publishDecision
+    });
+
+  if (!authorization.authorized) {
+    return {
+      success: false,
+      status:
+        authorization.status,
+      error:
+        authorization.error
+    };
+  }
+
   const validation =
     validateUploadInput({
       videoFile,
@@ -241,8 +279,10 @@ export async function uploadVideoToYouTube({
       videoFile
     );
 
+  let stats;
+
   try {
-    const stats =
+    stats =
       await fs.stat(
         absoluteVideoFile
       );
@@ -396,17 +436,29 @@ export async function uploadVideoToYouTube({
       };
     }
 
+    if (!uploadData?.id) {
+      return {
+        success: false,
+        status:
+          "UPLOAD_ID_MISSING",
+        error:
+          "YouTube accepted the upload but did not return a video ID."
+      };
+    }
+
     return {
       success: true,
       status: "UPLOADED",
       videoId:
-        uploadData?.id || null,
+        uploadData.id,
       privacyStatus:
         finalPrivacy,
       title:
         validation.title,
       uploadedFile:
         absoluteVideoFile,
+      publishAuthorization:
+        authorization.status,
       uploadedAt:
         new Date().toISOString()
     };
@@ -442,9 +494,15 @@ export function getYouTubeOAuthStatus() {
         : "NOT_CONFIGURED",
     privacyStatus:
       config.privacyStatus,
+    protection: [
+      "PUBLISH_GATE_REQUIRED",
+      "OAUTH_REQUIRED",
+      "VIDEO_FILE_REQUIRED",
+      "INVALID_UPLOAD_BLOCKED"
+    ],
     message:
       configured
-        ? "YouTube OAuth uploader is configured."
+        ? "YouTube OAuth uploader is configured and requires Publish Gate authorization."
         : "YouTube OAuth credentials are required before uploading."
   };
 }
