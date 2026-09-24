@@ -16,7 +16,7 @@ import {
 } from "./automationOrchestrator.js";
 
 import {
-  startReliabilityJob,
+  createReliabilityJob,
   completeReliabilityJob,
   failReliabilityJob
 } from "./automationReliability.js";
@@ -70,7 +70,7 @@ async function checkCEOState() {
     await getCEOAutomationStatus();
 
 
-  if (status.emergencyStop) {
+  if (status?.emergencyStop) {
 
     return {
       allowed: false,
@@ -85,7 +85,7 @@ async function checkCEOState() {
   }
 
 
-  if (status.mode === "STOP") {
+  if (status?.mode === "STOP") {
 
     return {
       allowed: false,
@@ -106,7 +106,7 @@ async function checkCEOState() {
       "CEO_READY",
 
     mode:
-      status.mode
+      status?.mode || "AUTO"
   };
 }
 
@@ -151,6 +151,25 @@ export async function runScheduledRegion({
 
 
   /*
+   * Normalize requested videos.
+   *
+   * 5 is the normal daily target.
+   * It is NOT a hard maximum.
+   */
+
+  const normalizedRequestedVideos =
+    Math.max(
+      1,
+      Math.min(
+        50,
+        Math.floor(
+          Number(requestedVideos) || 1
+        )
+      )
+    );
+
+
+  /*
    * First CEO safety check.
    */
 
@@ -184,29 +203,35 @@ export async function runScheduledRegion({
       region:
         normalizedRegion,
 
-      requestedVideos,
+      requestedVideos:
+        normalizedRequestedVideos,
 
       date
     });
 
 
-  if (!evaluation.allowed) {
+  if (!evaluation?.allowed) {
 
     return {
       success: false,
 
       status:
-        evaluation.status,
+        evaluation?.status ||
+        "SCHEDULE_NOT_ALLOWED",
 
       reason:
-        evaluation.reason ||
+        evaluation?.reason ||
         null,
 
       region:
         normalizedRegion,
 
       scheduleSlotId:
-        evaluation.scheduleSlotId ||
+        evaluation?.scheduleSlotId ||
+        null,
+
+      reservationKey:
+        evaluation?.reservationKey ||
         null
     };
   }
@@ -241,27 +266,30 @@ export async function runScheduledRegion({
     });
 
 
-  if (!reservation.success) {
+  if (!reservation?.success) {
 
     return {
       success: false,
 
       status:
-        reservation.status,
+        reservation?.status ||
+        "SCHEDULE_RESERVATION_FAILED",
 
       reason:
-        reservation.reason ||
+        reservation?.reason ||
         null,
 
       region:
         normalizedRegion,
 
       scheduleSlotId:
-        reservation.scheduleSlotId ||
-        evaluation.scheduleSlotId,
+        reservation?.scheduleSlotId ||
+        evaluation?.scheduleSlotId ||
+        null,
 
       reservationKey:
-        reservation.reservationKey ||
+        reservation?.reservationKey ||
+        evaluation?.reservationKey ||
         null
     };
   }
@@ -287,10 +315,12 @@ export async function runScheduledRegion({
 
       scheduleSlotId:
         reservation.scheduleSlotId ||
-        evaluation.scheduleSlotId,
+        evaluation.scheduleSlotId ||
+        null,
 
       reservationKey:
         reservation.reservationKey ||
+        evaluation.reservationKey ||
         null,
 
       skipped: true,
@@ -302,43 +332,78 @@ export async function runScheduledRegion({
 
 
   /*
-   * Start reliability tracking.
+   * Reliability tracking.
+   *
+   * IMPORTANT:
+   * Current automationReliability.js uses
+   * createReliabilityJob() and runId.
    */
 
-  let reliabilityJob = null;
+  let reliabilityJob =
+    null;
 
 
   try {
 
     reliabilityJob =
-      await startReliabilityJob({
+      await createReliabilityJob({
+
+        runId,
+
+        topic:
+          `Scheduled automation - ${normalizedRegion}`,
+
+        stage:
+          "SCHEDULED_AUTOMATION"
+      });
+
+
+    /*
+     * If the job already exists,
+     * the same persistent job is reused.
+     */
+
+    const reliabilityRunId =
+      reliabilityJob?.job?.runId ||
+      runId;
+
+
+    /*
+     * Store scheduler metadata in the
+     * reliability job.
+     */
+
+    if (
+      reliabilityJob?.job
+    ) {
+
+      reliabilityJob.job.metadata = {
+
+        ...(reliabilityJob.job.metadata || {}),
 
         jobType:
           "scheduled-automation",
 
-        runId,
+        region:
+          normalizedRegion,
 
-        metadata: {
+        scheduleSlotId:
+          reservation.scheduleSlotId ||
+          evaluation.scheduleSlotId ||
+          null,
 
-          region:
-            normalizedRegion,
+        reservationKey:
+          reservation.reservationKey ||
+          evaluation.reservationKey ||
+          null,
 
-          scheduleSlotId:
-            reservation.scheduleSlotId ||
-            evaluation.scheduleSlotId,
+        dailyTarget:
+          DAILY_TARGET_VIDEOS,
 
-          reservationKey:
-            reservation.reservationKey ||
-            evaluation.reservationKey ||
-            null,
-
-          dailyTarget:
-            DAILY_TARGET_VIDEOS,
-
-          targetIsHardMaximum:
-            false
-        }
-      });
+        targetIsHardMaximum:
+          false
+      };
+    }
 
 
     /*
@@ -352,18 +417,29 @@ export async function runScheduledRegion({
 
     if (!finalCEOCheck.allowed) {
 
-      if (reliabilityJob) {
+      await failReliabilityJob({
 
-        await failReliabilityJob({
+        runId:
+          reliabilityRunId,
 
-          jobId:
-            reliabilityJob.jobId,
-
-          error:
+        error:
+          new Error(
             finalCEOCheck.reason ||
             finalCEOCheck.status
-        });
-      }
+          ),
+
+        stage:
+          "CEO_FINAL_SAFETY_CHECK",
+
+        metadata: {
+
+          region:
+            normalizedRegion,
+
+          status:
+            finalCEOCheck.status
+        }
+      });
 
 
       return {
@@ -394,24 +470,38 @@ export async function runScheduledRegion({
 
     const startCheck =
       await canStartAutomation({
-        requestedVideos
+        requestedVideos:
+          normalizedRequestedVideos
       });
 
 
-    if (!startCheck.allowed) {
+    if (!startCheck?.allowed) {
 
-      if (reliabilityJob) {
+      await failReliabilityJob({
 
-        await failReliabilityJob({
+        runId:
+          reliabilityRunId,
 
-          jobId:
-            reliabilityJob.jobId,
+        error:
+          new Error(
+            startCheck?.reason ||
+            startCheck?.status ||
+            "Automation start was blocked."
+          ),
 
-          error:
-            startCheck.reason ||
-            startCheck.status
-        });
-      }
+        stage:
+          "AUTOMATION_START_GATE",
+
+        metadata: {
+
+          region:
+            normalizedRegion,
+
+          status:
+            startCheck?.status ||
+            "BLOCKED"
+        }
+      });
 
 
       return {
@@ -419,10 +509,12 @@ export async function runScheduledRegion({
         success: false,
 
         status:
-          startCheck.status,
+          startCheck?.status ||
+          "AUTOMATION_START_BLOCKED",
 
         reason:
-          startCheck.reason,
+          startCheck?.reason ||
+          "Automation start was blocked.",
 
         region:
           normalizedRegion,
@@ -436,7 +528,7 @@ export async function runScheduledRegion({
      * Run actual automation cycle.
      *
      * The orchestrator decides whether
-     * the topic is good, original and safe.
+     * topics are good, original and safe.
      */
 
     const result =
@@ -447,32 +539,115 @@ export async function runScheduledRegion({
 
         runId,
 
-        requestedVideos
+        requestedVideos:
+          normalizedRequestedVideos
       });
 
 
     /*
-     * Complete reliability tracking.
+     * Determine whether the automation cycle
+     * itself completed successfully.
      */
 
-    if (reliabilityJob) {
+    const automationSucceeded =
+      result?.success !== false;
+
+
+    if (automationSucceeded) {
 
       await completeReliabilityJob({
 
-        jobId:
-          reliabilityJob.jobId,
+        runId:
+          reliabilityRunId,
 
-        result
+        metadata: {
+
+          region:
+            normalizedRegion,
+
+          scheduleSlotId:
+            reservation.scheduleSlotId ||
+            evaluation.scheduleSlotId ||
+            null,
+
+          reservationKey:
+            reservation.reservationKey ||
+            evaluation.reservationKey ||
+            null,
+
+          requestedVideos:
+            normalizedRequestedVideos,
+
+          resultStatus:
+            result?.status ||
+            null,
+
+          produced:
+            Number(
+              result?.counts?.produced || 0
+            ),
+
+          ready:
+            Number(
+              result?.counts?.ready || 0
+            ),
+
+          review:
+            Number(
+              result?.counts?.review || 0
+            ),
+
+          blocked:
+            Number(
+              result?.counts?.blocked || 0
+            ),
+
+          failed:
+            Number(
+              result?.counts?.failed || 0
+            )
+        }
+      });
+
+    } else {
+
+      await failReliabilityJob({
+
+        runId:
+          reliabilityRunId,
+
+        error:
+          new Error(
+            result?.reason ||
+            result?.status ||
+            "Automation cycle failed."
+          ),
+
+        stage:
+          "AUTOMATION_CYCLE",
+
+        metadata: {
+
+          region:
+            normalizedRegion,
+
+          resultStatus:
+            result?.status ||
+            null
+        }
       });
     }
 
 
     return {
 
-      success: true,
+      success:
+        automationSucceeded,
 
       status:
-        "SCHEDULED_AUTOMATION_COMPLETED",
+        automationSucceeded
+          ? "SCHEDULED_AUTOMATION_COMPLETED"
+          : "SCHEDULED_AUTOMATION_FAILED",
 
       region:
         normalizedRegion,
@@ -481,7 +656,8 @@ export async function runScheduledRegion({
 
       scheduleSlotId:
         reservation.scheduleSlotId ||
-        evaluation.scheduleSlotId,
+        evaluation.scheduleSlotId ||
+        null,
 
       reservationKey:
         reservation.reservationKey ||
@@ -506,23 +682,36 @@ export async function runScheduledRegion({
 
   } catch (error) {
 
+    /*
+     * Never allow a reliability failure
+     * to hide the original automation error.
+     */
+
     if (reliabilityJob) {
 
       try {
 
         await failReliabilityJob({
 
-          jobId:
-            reliabilityJob.jobId,
+          runId:
+            reliabilityJob?.job?.runId ||
+            runId,
 
-          error:
-            error?.message ||
-            String(error)
+          error,
+
+          stage:
+            "SCHEDULED_AUTOMATION",
+
+          metadata: {
+
+            region:
+              normalizedRegion
+          }
         });
 
       } catch {
         /*
-         * Do not hide original error.
+         * Keep original error.
          */
       }
     }
@@ -562,6 +751,18 @@ export async function runScheduledAutomation({
 
 } = {}) {
 
+  const normalizedRequestedVideos =
+    Math.max(
+      1,
+      Math.min(
+        50,
+        Math.floor(
+          Number(requestedVideos) || 1
+        )
+      )
+    );
+
+
   const results = [];
 
 
@@ -574,7 +775,8 @@ export async function runScheduledAutomation({
 
         region,
 
-        requestedVideos,
+        requestedVideos:
+          normalizedRequestedVideos,
 
         date
       });
@@ -588,8 +790,16 @@ export async function runScheduledAutomation({
 
   const successfulRuns =
     results.filter(
-      item =>
-        item.success
+      (item) =>
+        item?.success
+    );
+
+
+  const skippedRuns =
+    results.filter(
+      (item) =>
+        item?.status ===
+        "SLOT_ALREADY_RESERVED"
     );
 
 
@@ -618,6 +828,9 @@ export async function runScheduledAutomation({
 
     successfulRegions:
       successfulRuns.length,
+
+    skippedRegions:
+      skippedRuns.length,
 
     results
   };
@@ -691,6 +904,9 @@ export async function previewScheduledAutomation({
           false,
 
         canContinueBeyondTarget:
+          true,
+
+        qualityOverQuantity:
           true
       });
 
@@ -714,21 +930,24 @@ export async function previewScheduledAutomation({
         currentRegion,
 
       allowed:
-        evaluation.allowed,
+        Boolean(
+          evaluation?.allowed
+        ),
 
       status:
-        evaluation.status,
+        evaluation?.status ||
+        "UNKNOWN",
 
       reason:
-        evaluation.reason ||
+        evaluation?.reason ||
         null,
 
       scheduleSlotId:
-        evaluation.scheduleSlotId ||
+        evaluation?.scheduleSlotId ||
         null,
 
       reservationKey:
-        evaluation.reservationKey ||
+        evaluation?.reservationKey ||
         null,
 
       dailyTarget:
@@ -826,25 +1045,32 @@ export async function getScheduledRunnerStatus() {
     ceo: {
 
       mode:
-        ceo.mode,
+        ceo?.mode ||
+        "UNKNOWN",
 
       emergencyStop:
-        ceo.emergencyStop,
+        Boolean(
+          ceo?.emergencyStop
+        ),
 
       dailyStarted:
-        ceo.daily?.started || 0,
+        Number(
+          ceo?.daily?.started || 0
+        ),
 
       dailyCompleted:
-        ceo.daily?.completed || 0,
+        Number(
+          ceo?.daily?.completed || 0
+        ),
 
       targetReached:
         Boolean(
-          ceo.daily?.targetReached
+          ceo?.daily?.targetReached
         ),
 
       overTarget:
         Number(
-          ceo.daily?.overTarget || 0
+          ceo?.daily?.overTarget || 0
         )
     }
   };
