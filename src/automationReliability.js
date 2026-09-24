@@ -298,7 +298,9 @@ export async function createReliabilityJob({
       null,
 
     lastError:
-      null
+      null,
+
+    metadata: {}
   };
 
   state.jobs[runId] =
@@ -482,7 +484,9 @@ export async function runReliableStage({
 
   if (job) {
     job.currentStage =
-      stage;
+      cleanText(stage) ||
+      "UNKNOWN";
+
     job.updatedAt =
       now();
 
@@ -656,6 +660,21 @@ export async function runReliableStage({
           retryAllowed:
             false
         };
+      }
+
+      if (job) {
+        job.status =
+          "RETRYING";
+
+        job.updatedAt =
+          now();
+
+        state.jobs[runId] =
+          job;
+
+        await writeState(
+          state
+        );
       }
 
       const delay =
@@ -956,7 +975,51 @@ export async function recoverInterruptedJobs() {
 
 /*
  * ---------------------------------------------------------
- * LOG / STATE STATUS
+ * JOB LOOKUP
+ * ---------------------------------------------------------
+ */
+
+export async function getReliabilityJob(
+  runId
+) {
+  const id =
+    cleanText(runId);
+
+  if (!id) {
+    return {
+      success: false,
+      status:
+        "INVALID_RUN_ID"
+    };
+  }
+
+  const state =
+    await readState();
+
+  const job =
+    state.jobs[id];
+
+  if (!job) {
+    return {
+      success: false,
+      status:
+        "JOB_NOT_FOUND",
+      runId:
+        id
+    };
+  }
+
+  return {
+    success: true,
+    status:
+      "JOB_FOUND",
+    job
+  };
+}
+
+/*
+ * ---------------------------------------------------------
+ * RELIABILITY STATUS
  * ---------------------------------------------------------
  */
 
@@ -974,6 +1037,13 @@ export async function getReliabilityStatus() {
       (job) =>
         job.status ===
         "RUNNING"
+    );
+
+  const retrying =
+    jobs.filter(
+      (job) =>
+        job.status ===
+        "RETRYING"
     );
 
   const failed =
@@ -997,6 +1067,69 @@ export async function getReliabilityStatus() {
         "RECOVERY_REQUIRED"
     );
 
+  const blocked =
+    jobs.filter(
+      (job) =>
+        job.status ===
+        "BLOCKED"
+    );
+
+  const recentJobs =
+    jobs
+      .sort(
+        (a, b) =>
+          new Date(
+            b.updatedAt || 0
+          ) -
+          new Date(
+            a.updatedAt || 0
+          )
+      )
+      .slice(0, 20)
+      .map(
+        (job) => ({
+          runId:
+            job.runId,
+
+          topic:
+            job.topic,
+
+          status:
+            job.status,
+
+          currentStage:
+            job.currentStage,
+
+          attempts:
+            job.attempts || {},
+
+          startedAt:
+            job.startedAt,
+
+          updatedAt:
+            job.updatedAt,
+
+          completedAt:
+            job.completedAt,
+
+          failedAt:
+            job.failedAt,
+
+          lastError:
+            job.lastError
+        })
+      );
+
+  const activeLocks =
+    Object.values(
+      state.locks
+    ).filter(
+      (lock) =>
+        lock &&
+        lock.status ===
+          "ACTIVE"
+    );
+
   return {
     configured: true,
 
@@ -1013,8 +1146,373 @@ export async function getReliabilityStatus() {
       active:
         active.length,
 
+      retrying:
+        retrying.length,
+
       failed:
         failed.length,
 
       completed:
         completed.length,
+
+      recovery:
+        recovery.length,
+
+      blocked:
+        blocked.length
+    },
+
+    locks: {
+      total:
+        Object.keys(
+          state.locks
+        ).length,
+
+      active:
+        activeLocks.length
+    },
+
+    recentJobs,
+
+    storage: {
+      stateFile:
+        STATE_FILE,
+
+      logFile:
+        LOG_FILE
+    },
+
+    retry: {
+      defaultMaxRetries:
+        DEFAULT_MAX_RETRIES,
+
+      defaultBaseDelayMs:
+        DEFAULT_BASE_DELAY_MS,
+
+      maxAttempts:
+        DEFAULT_MAX_RETRIES + 1,
+
+      maxBackoffMs:
+        30000
+    },
+
+    generatedAt:
+      now()
+  };
+}
+
+/*
+ * ---------------------------------------------------------
+ * LOGS
+ * ---------------------------------------------------------
+ */
+
+export async function getReliabilityLogs({
+  limit = 100
+} = {}) {
+  await ensureStorage();
+
+  const safeLimit =
+    Math.max(
+      1,
+      Math.min(
+        MAX_LOG_ENTRIES,
+        Number(limit) || 100
+      )
+    );
+
+  try {
+    const raw =
+      await fs.readFile(
+        LOG_FILE,
+        "utf8"
+      );
+
+    const lines =
+      raw
+        .split("\n")
+        .filter(
+          (line) =>
+            line.trim()
+        );
+
+    return {
+      success: true,
+      status:
+        "LOGS_READY",
+      count:
+        Math.min(
+          lines.length,
+          safeLimit
+        ),
+      logs:
+        lines
+          .slice(-safeLimit)
+          .reverse()
+          .map(
+            (line) => {
+              try {
+                return JSON.parse(
+                  line
+                );
+              } catch {
+                return {
+                  invalid:
+                    true,
+                  raw:
+                    line
+                };
+              }
+            }
+          )
+    };
+  } catch (error) {
+    if (
+      error.code ===
+      "ENOENT"
+    ) {
+      return {
+        success: true,
+        status:
+          "NO_LOGS",
+        count: 0,
+        logs: []
+      };
+    }
+
+    return {
+      success: false,
+      status:
+        "LOG_READ_FAILED",
+      error:
+        normalizeError(error)
+    };
+  }
+}
+
+/*
+ * ---------------------------------------------------------
+ * CLEAR / CLEANUP
+ * ---------------------------------------------------------
+ */
+
+export async function clearReliabilityJob(
+  runId
+) {
+  const id =
+    cleanText(runId);
+
+  if (!id) {
+    return {
+      success: false,
+      status:
+        "INVALID_RUN_ID"
+    };
+  }
+
+  const state =
+    await readState();
+
+  if (!state.jobs[id]) {
+    return {
+      success: false,
+      status:
+        "JOB_NOT_FOUND",
+      runId:
+        id
+    };
+  }
+
+  const job =
+    state.jobs[id];
+
+  delete state.jobs[id];
+
+  await writeState(
+    state
+  );
+
+  await appendLog({
+    type:
+      "JOB_CLEARED",
+    runId:
+      id,
+    previousStatus:
+      job.status
+  });
+
+  return {
+    success: true,
+    status:
+      "JOB_CLEARED",
+    runId:
+      id
+  };
+}
+
+export async function cleanupReliabilityState({
+  keepJobs = 500
+} = {}) {
+  const state =
+    await readState();
+
+  const safeKeep =
+    Math.max(
+      10,
+      Math.min(
+        5000,
+        Number(keepJobs) || 500
+      )
+    );
+
+  const jobs =
+    Object.values(
+      state.jobs
+    ).sort(
+      (a, b) =>
+        new Date(
+          b.updatedAt || 0
+        ) -
+        new Date(
+          a.updatedAt || 0
+        )
+    );
+
+  const removed =
+    jobs.slice(
+      safeKeep
+    );
+
+  for (const job of removed) {
+    delete state.jobs[
+      job.runId
+    ];
+  }
+
+  const locks =
+    Object.values(
+      state.locks
+    );
+
+  for (const lock of locks) {
+    if (
+      lock.status ===
+        "RELEASED" &&
+      lock.releasedAt
+    ) {
+      delete state.locks[
+        lock.key
+      ];
+    }
+  }
+
+  await writeState(
+    state
+  );
+
+  await appendLog({
+    type:
+      "RELIABILITY_STATE_CLEANUP",
+    removedJobs:
+      removed.length
+  });
+
+  return {
+    success: true,
+    status:
+      "CLEANUP_COMPLETED",
+    removedJobs:
+      removed.length,
+    remainingJobs:
+      Object.keys(
+        state.jobs
+      ).length
+  };
+}
+
+export async function resetReliabilityState() {
+  const state =
+    defaultState();
+
+  await writeState(
+    state
+  );
+
+  await appendLog({
+    type:
+      "RELIABILITY_STATE_RESET"
+  });
+
+  return {
+    success: true,
+    status:
+      "STATE_RESET"
+  };
+}
+
+/*
+ * ---------------------------------------------------------
+ * AUTOMATION RELIABILITY HEALTH
+ * ---------------------------------------------------------
+ */
+
+export function getAutomationReliabilityStatus() {
+  return {
+    configured: true,
+
+    status:
+      "READY",
+
+    retryEngine:
+      "ENABLED",
+
+    recovery:
+      "ENABLED",
+
+    jobState:
+      "PERSISTENT",
+
+    duplicateProtection:
+      "LOCK_BASED",
+
+    defaultMaxRetries:
+      DEFAULT_MAX_RETRIES,
+
+    defaultBaseDelayMs:
+      DEFAULT_BASE_DELAY_MS,
+
+    maxBackoffMs:
+      30000,
+
+    maxLogEntries:
+      MAX_LOG_ENTRIES,
+
+    stateFile:
+      STATE_FILE,
+
+    logFile:
+      LOG_FILE,
+
+    message:
+      "Automation reliability, retry, recovery and job-lock protection are available."
+  };
+}
+
+export default {
+  createReliabilityJob,
+  updateReliabilityJob,
+  runReliableStage,
+  acquireJobLock,
+  releaseJobLock,
+  completeReliabilityJob,
+  failReliabilityJob,
+  getRecoverableJobs,
+  recoverInterruptedJobs,
+  getReliabilityStatus,
+  getReliabilityLogs,
+  getReliabilityJob,
+  clearReliabilityJob,
+  cleanupReliabilityState,
+  resetReliabilityState,
+  getAutomationReliabilityStatus
+};
