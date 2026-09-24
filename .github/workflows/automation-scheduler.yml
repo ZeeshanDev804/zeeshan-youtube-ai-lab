@@ -2,7 +2,6 @@ name: ZEESHAN AI LABS - Automation Scheduler
 
 on:
   schedule:
-    # Check every 15 minutes for worldwide schedule windows.
     - cron: "*/15 * * * *"
 
   workflow_dispatch:
@@ -118,6 +117,7 @@ jobs:
           echo "Hard daily maximum: DISABLED"
           echo "Additional strong topics: ALLOWED"
           echo "CEO safety controls: ENABLED"
+
           echo "=============================================="
 
 
@@ -162,18 +162,14 @@ jobs:
 
 
           /*
-           * Scheduled GitHub Actions runs do not have
-           * workflow_dispatch inputs.
+           * Scheduled runs automatically execute.
            *
-           * Therefore scheduled runs must execute
-           * automatically instead of falling back
-           * to preview mode.
+           * workflow_dispatch uses the selected inputs.
            */
 
           if (eventName === "schedule") {
 
             region = "ALL";
-
             execute = true;
 
           } else {
@@ -258,43 +254,63 @@ jobs:
 
           /*
            * --------------------------------------------------------
-           * SCHEDULE SKIP IS NOT AN ERROR
+           * NORMAL SKIP STATUSES
            * --------------------------------------------------------
            *
-           * GitHub Actions checks every 15 minutes.
+           * The GitHub workflow checks every 15 minutes.
            *
-           * Most runs will NOT fall inside a valid regional
+           * A region can normally be outside its 15-minute
            * schedule window.
            *
-           * These statuses are therefore successful no-op runs.
+           * That is NOT an automation failure.
            */
 
-          const successfulSkipStatuses = [
+          const normalSkipStatuses = new Set([
             "OUTSIDE_SCHEDULE_WINDOW",
             "SCHEDULED_AUTOMATION_SKIPPED",
-            "SCHEDULE_PREVIEW"
-          ];
+            "SCHEDULE_PREVIEW",
+            "SLOT_ALREADY_RESERVED",
+            "ALREADY_RESERVED",
+            "ALREADY_RUN"
+          ]);
 
 
-          const isSuccessfulSkip =
-            successfulSkipStatuses.includes(
-              result?.status
-            );
+          const status =
+            result?.status || "";
+
+
+          const isNormalSkip =
+            normalSkipStatuses.has(status);
 
 
           /*
            * --------------------------------------------------------
-           * ACTUAL FAILURE CHECK
+           * SUCCESS / FAILURE DECISION
            * --------------------------------------------------------
            *
-           * Only real automation failures should make
-           * GitHub Actions exit with code 1.
+           * success:false + normal skip = EXIT 0
+           *
+           * success:false + real failure = EXIT 1
            */
 
-          if (
-            result?.success === false &&
-            !isSuccessfulSkip
-          ) {
+          if (isNormalSkip) {
+
+            console.log("");
+            console.log(
+              "NORMAL SCHEDULE SKIP - NOT AN ERROR."
+            );
+            console.log(
+              "Status:",
+              status
+            );
+            console.log(
+              "GitHub Actions will exit successfully."
+            );
+            console.log("");
+
+            process.exitCode = 0;
+
+          } else if (result?.success === false) {
 
             console.error("");
             console.error(
@@ -302,7 +318,7 @@ jobs:
             );
             console.error(
               "Status:",
-              result?.status || "UNKNOWN"
+              status || "UNKNOWN"
             );
             console.error(
               "Reason:",
@@ -314,15 +330,13 @@ jobs:
 
           } else {
 
+            console.log("");
             console.log(
-              "Automation scheduler completed successfully."
+              "AUTOMATION SCHEDULER COMPLETED SUCCESSFULLY."
             );
+            console.log("");
 
-            if (isSuccessfulSkip) {
-              console.log(
-                "This run was a normal schedule skip/no-op."
-              );
-            }
+            process.exitCode = 0;
           }
 
           NODE
