@@ -9,9 +9,10 @@ on:
       region:
         description: "Region to execute"
         required: false
-        default: "USA"
+        default: "ALL"
         type: choice
         options:
+          - ALL
           - USA
           - UK
           - EUROPE
@@ -23,7 +24,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: zeeshan-ai-automation
@@ -38,12 +39,13 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       - name: Install dependencies
         run: npm install
@@ -61,43 +63,87 @@ jobs:
           CEO_EMERGENCY_STOP: ${{ secrets.CEO_EMERGENCY_STOP }}
 
         run: |
-          node --input-type=module -e "
+          node --input-type=module <<'NODE'
           import {
             executeScheduledAutomation,
             previewScheduledAutomation
-          } from './src/scheduledAutomationRunner.js';
+          } from "./src/scheduledAutomationRunner.js";
 
-          const region =
-            process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
-              ? '${{ inputs.region }}'
-              : 'USA';
+          const isManual =
+            process.env.GITHUB_EVENT_NAME === "workflow_dispatch";
+
+          const requestedRegion =
+            isManual
+              ? "${{ inputs.region }}"
+              : "ALL";
 
           const executeInput =
-            process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
-              ? '${{ inputs.execute }}' === 'true'
+            isManual
+              ? "${{ inputs.execute }}" === "true"
               : true;
 
-          const result = executeInput
-            ? await executeScheduledAutomation({ region })
-            : await previewScheduledAutomation({ region });
+          const regions =
+            requestedRegion === "ALL"
+              ? ["USA", "UK", "EUROPE"]
+              : [requestedRegion];
 
-          console.log(JSON.stringify(result, null, 2));
+          const results = [];
 
-          if (
-            result.status === 'EMERGENCY_STOP' ||
-            result.status === 'AUTOMATION_STOPPED'
-          ) {
-            process.exit(0);
+          for (const region of regions) {
+            const result = executeInput
+              ? await executeScheduledAutomation({ region })
+              : await previewScheduledAutomation({ region });
+
+            results.push({
+              region,
+              result
+            });
           }
 
-          if (
-            result.status === 'OUTSIDE_SCHEDULE' ||
-            result.status === 'DAILY_LIMIT_REACHED'
-          ) {
-            process.exit(0);
-          }
+          console.log(
+            JSON.stringify(
+              {
+                success: true,
+                mode: executeInput ? "EXECUTE" : "DRY_RUN",
+                regions,
+                results
+              },
+              null,
+              2
+            )
+          );
 
-          if (result.success !== true) {
+          const hardFailures =
+            results.filter(
+              ({ result }) =>
+                result?.success !== true &&
+                ![
+                  "OUTSIDE_SCHEDULE",
+                  "DAILY_LIMIT_REACHED",
+                  "EMERGENCY_STOP",
+                  "AUTOMATION_STOPPED",
+                  "SCHEDULE_NOT_ELIGIBLE"
+                ].includes(result?.status)
+            );
+
+          if (hardFailures.length > 0) {
             process.exit(1);
           }
-          "
+          NODE
+
+      - name: Persist automation state
+        if: always()
+        run: |
+          mkdir -p storage/automation
+
+          git config user.name "ZEESHAN AI LABS Automation"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add storage/automation/
+
+          if git diff --cached --quiet; then
+            echo "No automation state changes to commit."
+          else
+            git commit -m "chore: persist automation state"
+            git push
+          fi
