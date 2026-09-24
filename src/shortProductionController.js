@@ -24,6 +24,13 @@ function cleanText(value = "") {
     .trim();
 }
 
+function isNonEmptyString(value) {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0
+  );
+}
+
 export async function prepareShortForPublishing({
   topic,
   script,
@@ -133,16 +140,24 @@ export async function prepareShortForPublishing({
   return {
     success:
       publishDecision.allowed === true,
+
     status:
       publishDecision.status,
+
     productionId:
       manifest.id,
+
     topic:
       cleanText(topic),
+
     manifest,
+
     qa,
+
     uploadJob,
+
     publishDecision,
+
     createdAt:
       new Date().toISOString()
   };
@@ -151,18 +166,41 @@ export async function prepareShortForPublishing({
 export async function buildFinalShort({
   videoFile,
   audioFile,
+  captionFile = null,
   title = "",
   outputDir = "./storage/final"
 } = {}) {
-  if (
-    !cleanText(videoFile) ||
-    !cleanText(audioFile)
-  ) {
+  const errors = [];
+
+  if (!isNonEmptyString(videoFile)) {
+    errors.push(
+      "Video file is required."
+    );
+  }
+
+  if (!isNonEmptyString(audioFile)) {
+    errors.push(
+      "Audio file is required."
+    );
+  }
+
+  if (errors.length > 0) {
     return {
       success: false,
       status: "INVALID_MEDIA",
+      errors
+    };
+  }
+
+  if (
+    captionFile !== null &&
+    !isNonEmptyString(captionFile)
+  ) {
+    return {
+      success: false,
+      status: "INVALID_CAPTION",
       errors: [
-        "Video and audio files are required."
+        "Caption file must be a valid SRT file path."
       ]
     };
   }
@@ -171,6 +209,7 @@ export async function buildFinalShort({
     await renderFinalShort({
       videoFile,
       audioFile,
+      captionFile,
       title,
       outputDir
     });
@@ -178,28 +217,66 @@ export async function buildFinalShort({
   if (!result.success) {
     return {
       success: false,
-      status: "FINAL_RENDER_FAILED",
+
+      status:
+        result.status ||
+        "FINAL_RENDER_FAILED",
+
       error:
         result.error ||
-        "Final Short could not be created."
+        "Final Short could not be created.",
+
+      details:
+        result
     };
   }
 
   return {
     success: true,
-    status: "FINAL_SHORT_READY",
+
+    status:
+      result.status ||
+      "FINAL_SHORT_READY",
+
     outputFile:
       result.outputFile,
+
     sizeBytes:
       result.sizeBytes,
+
+    captions:
+      result.captions || {
+        enabled:
+          Boolean(captionFile),
+        burnedIntoVideo:
+          Boolean(captionFile)
+      },
+
     createdAt:
       result.createdAt
   };
 }
 
+export async function prepareShortFinalRender({
+  videoFile,
+  audioFile,
+  captionFile = null,
+  title = "",
+  outputDir = "./storage/final"
+} = {}) {
+  return buildFinalShort({
+    videoFile,
+    audioFile,
+    captionFile,
+    title,
+    outputDir
+  });
+}
+
 export function getShortProductionControllerStatus() {
   return {
     configured: true,
+
     status: "READY",
 
     pipeline: [
@@ -208,12 +285,22 @@ export function getShortProductionControllerStatus() {
       "VOICE",
       "VISUALS",
       "VIDEO",
+      "CAPTIONS",
       "FINAL_RENDER",
       "QUALITY_ASSURANCE",
       "UPLOAD_AUTHORIZATION",
       "CEO_PUBLISH_GATE",
       "YOUTUBE"
     ],
+
+    finalRender: {
+      configured: true,
+      renderer: "finalShortRenderer",
+      captionSupport: true,
+      captionFormat: "SRT",
+      captionMode:
+        "OPTIONAL_BURN_IN"
+    },
 
     safetyGates: [
       "QA_REQUIRED",
@@ -223,6 +310,13 @@ export function getShortProductionControllerStatus() {
     ],
 
     message:
-      "Central Short production controller is ready."
+      "Central Short production controller is ready with optional burned-in caption support."
   };
 }
+
+export default {
+  prepareShortForPublishing,
+  buildFinalShort,
+  prepareShortFinalRender,
+  getShortProductionControllerStatus
+};
