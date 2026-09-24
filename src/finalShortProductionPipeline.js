@@ -25,6 +25,19 @@ function cleanText(value = "") {
     .trim();
 }
 
+function toPositiveNumber(value) {
+  const number = Number(value);
+
+  if (
+    !Number.isFinite(number) ||
+    number <= 0
+  ) {
+    return null;
+  }
+
+  return number;
+}
+
 export async function produceFinalShort({
   topic,
   script,
@@ -61,12 +74,13 @@ export async function produceFinalShort({
   // 1. VOICE
   // --------------------------------------------------
 
-  const voice = await generateProductionVoice({
-    script: cleanScript,
-    language,
-    voiceId,
-    outputDir: audioDir
-  });
+  const voice =
+    await generateProductionVoice({
+      script: cleanScript,
+      language,
+      voiceId,
+      outputDir: audioDir
+    });
 
   if (!voice.success) {
     return {
@@ -77,16 +91,33 @@ export async function produceFinalShort({
     };
   }
 
+  const voiceDuration =
+    toPositiveNumber(
+      voice.durationSeconds
+    );
+
+  if (voiceDuration === null) {
+    return {
+      success: false,
+      status: "VOICE_DURATION_REQUIRED",
+      stage: "VOICE",
+      error:
+        "Actual generated voice duration is required before caption and final video production.",
+      voice
+    };
+  }
+
   // --------------------------------------------------
   // 2. VISUALS
   // --------------------------------------------------
 
-  const visuals = await generateProductionVisuals({
-    script: cleanScript,
-    topic: cleanTopic,
-    outputDir: assetsDir,
-    aspectRatio: "9:16"
-  });
+  const visuals =
+    await generateProductionVisuals({
+      script: cleanScript,
+      topic: cleanTopic,
+      outputDir: assetsDir,
+      aspectRatio: "9:16"
+    });
 
   if (!visuals.success) {
     return {
@@ -98,16 +129,45 @@ export async function produceFinalShort({
     };
   }
 
+  const sceneCount =
+    Number(
+      visuals.sceneCount ||
+      visuals.scenes?.length ||
+      0
+    );
+
+  if (
+    !Number.isInteger(sceneCount) ||
+    sceneCount <= 0
+  ) {
+    return {
+      success: false,
+      status: "VISUAL_SCENES_INVALID",
+      stage: "VISUALS",
+      error:
+        "At least one valid visual scene is required.",
+      voice,
+      visuals
+    };
+  }
+
   // --------------------------------------------------
   // 3. VISUAL VIDEO
   // --------------------------------------------------
 
-  const visualVideo = await createVisualVideo({
-    scenes: visuals.scenes,
-    outputDir: videoDir,
-    durationPerScene,
-    fps
-  });
+  const visualDurationPerScene =
+    toPositiveNumber(
+      durationPerScene
+    ) || 5;
+
+  const visualVideo =
+    await createVisualVideo({
+      scenes: visuals.scenes,
+      outputDir: videoDir,
+      durationPerScene:
+        visualDurationPerScene,
+      fps
+    });
 
   if (!visualVideo.success) {
     return {
@@ -120,43 +180,110 @@ export async function produceFinalShort({
     };
   }
 
+  const visualDuration =
+    toPositiveNumber(
+      visualVideo.estimatedDuration
+    ) ||
+    sceneCount *
+      visualDurationPerScene;
+
+  if (visualDuration === null) {
+    return {
+      success: false,
+      status: "VISUAL_DURATION_INVALID",
+      stage: "VIDEO",
+      error:
+        "Visual video duration could not be determined.",
+      voice,
+      visuals,
+      visualVideo
+    };
+  }
+
   // --------------------------------------------------
-  // 4. CAPTION TIMELINE
+  // 4. DURATION COMPATIBILITY CHECK
   // --------------------------------------------------
 
-  const estimatedDuration =
-    Math.max(
-      1,
-      Number(
-        visualVideo.sceneCount ||
-        visuals.sceneCount ||
-        1
-      ) *
-        Number(durationPerScene || 5)
+  const durationDifference =
+    Math.abs(
+      visualDuration -
+      voiceDuration
     );
+
+  /*
+   * A small difference is acceptable because
+   * FFmpeg can handle minor timing differences.
+   *
+   * A large mismatch should stop production
+   * rather than silently producing bad sync.
+   */
+  const maxAllowedDifference =
+    2;
+
+  if (
+    durationDifference >
+    maxAllowedDifference
+  ) {
+    return {
+      success: false,
+      status:
+        "MEDIA_DURATION_MISMATCH",
+      stage:
+        "DURATION_CHECK",
+      error:
+        "Voice and visual video durations are too far apart.",
+      voiceDurationSeconds:
+        voiceDuration,
+      visualDurationSeconds:
+        visualDuration,
+      differenceSeconds:
+        Number(
+          durationDifference.toFixed(3)
+        ),
+      maxAllowedDifferenceSeconds:
+        maxAllowedDifference,
+      voice,
+      visuals,
+      visualVideo
+    };
+  }
+
+  /*
+   * Captions follow the actual voice duration.
+   * This is the important fix.
+   */
+  const captionDuration =
+    voiceDuration;
+
+  // --------------------------------------------------
+  // 5. CAPTION TIMELINE
+  // --------------------------------------------------
 
   const captionTimeline =
     createCaptionTimeline({
       text: cleanScript,
       durationSeconds:
-        estimatedDuration,
+        captionDuration,
       maxWordsPerCaption: 7
     });
 
   if (!captionTimeline.success) {
     return {
       success: false,
-      status: "CAPTION_STAGE_FAILED",
-      stage: "CAPTIONS",
+      status:
+        "CAPTION_STAGE_FAILED",
+      stage:
+        "CAPTIONS",
       voice,
       visuals,
       visualVideo,
-      captions: captionTimeline
+      captions:
+        captionTimeline
     };
   }
 
   // --------------------------------------------------
-  // 5. SAVE SRT
+  // 6. SAVE SRT
   // --------------------------------------------------
 
   const captionFile =
@@ -169,18 +296,21 @@ export async function produceFinalShort({
   if (!captionFile.success) {
     return {
       success: false,
-      status: "CAPTION_SAVE_FAILED",
-      stage: "CAPTIONS",
+      status:
+        "CAPTION_SAVE_FAILED",
+      stage:
+        "CAPTIONS",
       voice,
       visuals,
       visualVideo,
-      captions: captionTimeline,
+      captions:
+        captionTimeline,
       captionFile
     };
   }
 
   // --------------------------------------------------
-  // 6. FINAL VIDEO + AUDIO + BURNED-IN CAPTIONS
+  // 7. FINAL VIDEO + AUDIO + BURNED-IN CAPTIONS
   // --------------------------------------------------
 
   const finalVideo =
@@ -204,24 +334,28 @@ export async function produceFinalShort({
   if (!finalVideo.success) {
     return {
       success: false,
-      status: "FINAL_RENDER_FAILED",
-      stage: "FINAL_RENDER",
+      status:
+        "FINAL_RENDER_FAILED",
+      stage:
+        "FINAL_RENDER",
       voice,
       visuals,
       visualVideo,
-      captions: captionTimeline,
+      captions:
+        captionTimeline,
       captionFile,
       finalVideo
     };
   }
 
   // --------------------------------------------------
-  // 7. FINAL PRODUCTION RESULT
+  // 8. FINAL PRODUCTION RESULT
   // --------------------------------------------------
 
   return {
     success: true,
-    status: "FINAL_SHORT_READY",
+    status:
+      "FINAL_SHORT_READY",
 
     topic:
       cleanTopic,
@@ -231,12 +365,21 @@ export async function produceFinalShort({
         voice.outputFile,
 
       provider:
-        voice.provider
+        voice.provider,
+
+      durationSeconds:
+        voiceDuration,
+
+      sizeBytes:
+        voice.sizeBytes,
+
+      format:
+        voice.format
     },
 
     visuals: {
       sceneCount:
-        visuals.sceneCount,
+        sceneCount,
 
       provider:
         visuals.provider
@@ -247,13 +390,34 @@ export async function produceFinalShort({
         visualVideo.outputFile,
 
       sceneCount:
-        visualVideo.sceneCount
+        visualVideo.sceneCount,
+
+      durationSeconds:
+        visualDuration
+    },
+
+    durationCheck: {
+      voiceDurationSeconds:
+        voiceDuration,
+
+      visualDurationSeconds:
+        visualDuration,
+
+      differenceSeconds:
+        Number(
+          durationDifference.toFixed(3)
+        ),
+
+      status:
+        "WITHIN_ALLOWED_RANGE"
     },
 
     captions: {
-      status: "BURNED_IN",
+      status:
+        "BURNED_IN",
 
-      format: "SRT",
+      format:
+        "SRT",
 
       outputFile:
         captionFile.outputFile,
@@ -265,7 +429,10 @@ export async function produceFinalShort({
         captionTimeline.captions.length,
 
       durationSeconds:
-        captionTimeline.durationSeconds
+        captionTimeline.durationSeconds,
+
+      timingSource:
+        "ACTUAL_VOICE_DURATION"
     },
 
     finalVideo: {
@@ -289,14 +456,18 @@ export async function produceFinalShort({
 
 export function getFinalShortProductionStatus() {
   return {
-    configured: true,
+    configured:
+      true,
 
-    status: "READY",
+    status:
+      "READY",
 
     stages: [
       "VOICE",
+      "VOICE_DURATION_VALIDATION",
       "VISUALS",
       "VISUAL_VIDEO",
+      "MEDIA_DURATION_CHECK",
       "CAPTIONS",
       "SRT_SAVE",
       "FINAL_AUDIO_VIDEO_MERGE",
@@ -313,11 +484,14 @@ export function getFinalShortProductionStatus() {
     captionMode:
       "BURNED_IN",
 
+    captionTiming:
+      "ACTUAL_VOICE_DURATION",
+
     resolution:
       "1080x1920",
 
     message:
-      "Voice, visual assets, SRT captions and burned-in final YouTube Short MP4 can be generated."
+      "Voice, visuals, actual audio timing, synchronized SRT captions and burned-in final YouTube Short MP4 are connected."
   };
 }
 
