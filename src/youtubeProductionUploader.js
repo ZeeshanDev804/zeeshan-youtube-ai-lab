@@ -45,9 +45,11 @@ export async function publishShortToYouTube({
     };
   }
 
+  const publishDecision =
+    preparation.publishDecision;
+
   if (
-    preparation.publishDecision?.allowed !==
-    true
+    publishDecision?.allowed !== true
   ) {
     return {
       success: false,
@@ -66,7 +68,8 @@ export async function publishShortToYouTube({
     return {
       success: false,
       status:
-        "VIDEO_FILE_REQUIRED"
+        "VIDEO_FILE_REQUIRED",
+      preparation
     };
   }
 
@@ -79,13 +82,15 @@ export async function publishShortToYouTube({
         cleanText(description),
       tags,
       categoryId,
-      privacyStatus
+      privacyStatus,
+      publishDecision
     });
 
   if (!upload.success) {
     return {
       success: false,
       status:
+        upload.status ||
         "YOUTUBE_UPLOAD_FAILED",
       preparation,
       upload
@@ -100,8 +105,14 @@ export async function publishShortToYouTube({
       upload.videoId,
     youtubeUrl:
       upload.youtubeUrl ||
-      `https://www.youtube.com/watch?v=${upload.videoId}`,
-    privacyStatus,
+      (
+        upload.videoId
+          ? `https://www.youtube.com/watch?v=${upload.videoId}`
+          : null
+      ),
+    privacyStatus:
+      upload.privacyStatus ||
+      privacyStatus,
     preparation,
     upload,
     uploadedAt:
@@ -110,18 +121,18 @@ export async function publishShortToYouTube({
 }
 
 export function getYouTubeProductionUploaderStatus() {
-  return {
-    configured:
-      Boolean(
-        process.env.YOUTUBE_CLIENT_ID &&
-        process.env.YOUTUBE_CLIENT_SECRET &&
-        process.env.YOUTUBE_REFRESH_TOKEN
-      ),
-
-    status:
+  const configured =
+    Boolean(
       process.env.YOUTUBE_CLIENT_ID &&
       process.env.YOUTUBE_CLIENT_SECRET &&
       process.env.YOUTUBE_REFRESH_TOKEN
+    );
+
+  return {
+    configured,
+
+    status:
+      configured
         ? "CONFIGURED"
         : "NOT_CONFIGURED",
 
@@ -135,9 +146,13 @@ export function getYouTubeProductionUploaderStatus() {
       "QUALITY_ASSURANCE",
       "UPLOAD_GUARD",
       "RISK_CHECK",
+      "PUBLISH_GATE",
       "CEO_APPROVAL",
       "EMERGENCY_STOP"
     ],
+
+    authorization:
+      "Publish Gate authorization is mandatory before OAuth upload.",
 
     message:
       "YouTube uploader can only run after all publishing gates authorize the upload."
