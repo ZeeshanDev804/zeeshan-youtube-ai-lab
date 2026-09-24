@@ -1,11 +1,10 @@
 import fs from "fs";
-import dotenv from "dotenv";
+
+import config from "./config.js";
 
 import {
   canPublishAfterQA
 } from "./shortQualityPipeline.js";
-
-dotenv.config();
 
 const VALID_PRIVACY = [
   "private",
@@ -31,10 +30,13 @@ function isNonEmptyString(value) {
 }
 
 function normalizeRisk(value = "LOW") {
-  const risk = cleanText(value).toUpperCase();
+  const risk =
+    cleanText(value).toUpperCase();
 
   if (
-    ["LOW", "MEDIUM", "HIGH"].includes(risk)
+    ["LOW", "MEDIUM", "HIGH"].includes(
+      risk
+    )
   ) {
     return risk;
   }
@@ -44,36 +46,26 @@ function normalizeRisk(value = "LOW") {
 
 function isEmergencyStopActive() {
   return (
-    cleanText(
-      process.env.EMERGENCY_STOP || "false"
-    ).toLowerCase() === "true"
+    config.system.emergencyStop === true
   );
 }
 
 function getSystemMode() {
   return cleanText(
-    process.env.SYSTEM_MODE || "REVIEW"
+    config.system.mode || "REVIEW"
   ).toUpperCase();
-}
-
-function isCEOApprovalRequired() {
-  return (
-    cleanText(
-      process.env.CEO_APPROVAL_REQUIRED || "true"
-    ).toLowerCase() === "true"
-  );
 }
 
 function hasYouTubeCredentials() {
   return Boolean(
     isNonEmptyString(
-      process.env.YOUTUBE_CLIENT_ID
+      config.youtube.clientId
     ) &&
     isNonEmptyString(
-      process.env.YOUTUBE_CLIENT_SECRET
+      config.youtube.clientSecret
     ) &&
     isNonEmptyString(
-      process.env.YOUTUBE_REFRESH_TOKEN
+      config.youtube.refreshToken
     )
   );
 }
@@ -98,8 +90,9 @@ function validateVideoFile(videoFile) {
   let stats;
 
   try {
-    stats = fs.statSync(videoFile);
-  } catch (error) {
+    stats =
+      fs.statSync(videoFile);
+  } catch {
     return {
       valid: false,
       error:
@@ -177,19 +170,34 @@ function validateMetadata({
       ? tags
           .map(cleanText)
           .filter(Boolean)
-          .slice(0, MAX_TAGS)
       : [];
+
+  if (
+    cleanTags.length >
+    MAX_TAGS
+  ) {
+    errors.push(
+      `YouTube tags cannot contain more than ${MAX_TAGS} tags.`
+    );
+  }
 
   return {
     valid:
       errors.length === 0,
+
     errors,
+
     title:
       cleanTitle,
+
     description:
       cleanDescription,
+
     tags:
-      cleanTags
+      cleanTags.slice(
+        0,
+        MAX_TAGS
+      )
   };
 }
 
@@ -199,6 +207,7 @@ function validatePrivacy(
   const privacy =
     cleanText(
       privacyStatus ||
+        config.youtube.privacyStatus ||
         "private"
     ).toLowerCase();
 
@@ -262,18 +271,19 @@ function validateRisk({
       riskLevel
     );
 
-  if (risk === "HIGH") {
-    return {
-      allowed: false,
-      riskLevel: risk,
-      reason:
-        "High-risk content cannot enter the YouTube upload stage."
-    };
-  }
-
+  /*
+   * IMPORTANT:
+   * HIGH risk is NOT automatically rejected here.
+   *
+   * It must go to the CEO review/publish gate.
+   * This guard only records the risk level.
+   */
   return {
     allowed: true,
-    riskLevel: risk
+    riskLevel: risk,
+    requiresCEOReview:
+      risk === "MEDIUM" ||
+      risk === "HIGH"
   };
 }
 
@@ -375,20 +385,7 @@ function validateCopyrightResult(
   };
 }
 
-function validateCEOAuthorization({
-  ceoApproval = null,
-  systemMode
-} = {}) {
-  if (
-    systemMode === "STOP"
-  ) {
-    return {
-      allowed: false,
-      reason:
-        "System mode is STOP."
-    };
-  }
-
+function validateSystemState() {
   if (
     isEmergencyStopActive()
   ) {
@@ -400,22 +397,13 @@ function validateCEOAuthorization({
   }
 
   if (
-    systemMode === "REVIEW" &&
-    isCEOApprovalRequired()
+    getSystemMode() === "STOP"
   ) {
-    const approved =
-      ceoApproval === true ||
-      ceoApproval?.approved === true ||
-      ceoApproval?.status ===
-        "APPROVED";
-
-    if (!approved) {
-      return {
-        allowed: false,
-        reason:
-          "CEO approval is required before YouTube upload."
-      };
-    }
+    return {
+      allowed: false,
+      reason:
+        "System mode is STOP."
+    };
   }
 
   return {
@@ -430,13 +418,12 @@ export function createYouTubeUploadJob({
   title,
   description = "",
   tags = [],
-  privacyStatus = "private",
-  categoryId = "22",
+  privacyStatus,
+  categoryId,
   riskLevel = "LOW",
   safetyResult = null,
   duplicateResult = null,
-  copyrightResult = null,
-  ceoApproval = null
+  copyrightResult = null
 } = {}) {
   const errors = [];
 
@@ -459,6 +446,15 @@ export function createYouTubeUploadJob({
   if (!videoCheck.valid) {
     errors.push(
       videoCheck.error
+    );
+  }
+
+  const systemCheck =
+    validateSystemState();
+
+  if (!systemCheck.allowed) {
+    errors.push(
+      systemCheck.reason
     );
   }
 
@@ -499,9 +495,13 @@ export function createYouTubeUploadJob({
     );
   }
 
+  const finalCategoryId =
+    categoryId ||
+    config.youtube.categoryId ||
+    "22";
+
   if (
-    !categoryId ||
-    !String(categoryId).trim()
+    !String(finalCategoryId).trim()
   ) {
     errors.push(
       "YouTube category ID is required."
@@ -513,12 +513,6 @@ export function createYouTubeUploadJob({
       riskLevel,
       safetyResult
     });
-
-  if (!riskCheck.allowed) {
-    errors.push(
-      riskCheck.reason
-    );
-  }
 
   const duplicateCheck =
     validateDuplicateResult(
@@ -542,81 +536,102 @@ export function createYouTubeUploadJob({
     );
   }
 
-  const systemMode =
-    getSystemMode();
-
-  const ceoCheck =
-    validateCEOAuthorization({
-      ceoApproval,
-      systemMode
-    });
-
-  if (!ceoCheck.allowed) {
-    errors.push(
-      ceoCheck.reason
-    );
-  }
-
   if (errors.length > 0) {
     return {
       success: false,
+
       status:
         "UPLOAD_BLOCKED",
+
       errors,
+
       checks: {
         qaPassed:
           qaAuthorization.allowed,
+
         videoValid:
           videoCheck.valid,
+
         riskLevel:
           riskCheck.riskLevel,
+
+        requiresCEOReview:
+          riskCheck.requiresCEOReview,
+
         duplicateStatus:
           duplicateCheck.status,
+
         copyrightStatus:
           copyrightCheck.status,
-        ceoAuthorized:
-          ceoCheck.allowed
+
+        systemAllowed:
+          systemCheck.allowed
       }
     };
   }
 
   return {
     success: true,
+
     status:
       "UPLOAD_READY",
+
     productionId:
       manifest.id,
+
     videoFile,
+
     metadata: {
       title:
         metadata.title,
+
       description:
         metadata.description,
+
       tags:
         metadata.tags,
+
       categoryId:
-        String(categoryId)
+        String(finalCategoryId)
     },
+
     privacyStatus:
       privacy.privacyStatus,
+
     authorization: {
       qaPassed: true,
+
       videoValidated: true,
+
       uploadAllowed: true,
+
       riskLevel:
         riskCheck.riskLevel,
+
+      requiresCEOReview:
+        riskCheck.requiresCEOReview,
+
       duplicateCheck:
         duplicateCheck.status,
+
       copyrightCheck:
         copyrightCheck.status,
-      ceoApproved:
-        true,
-      systemMode
+
+      systemMode:
+        getSystemMode(),
+
+      emergencyStop:
+        false
     },
+
     youtubeCredentialsConfigured:
       hasYouTubeCredentials(),
+
     nextStage:
-      "YOUTUBE_OAUTH_UPLOAD",
+      riskCheck.requiresCEOReview
+        ? "CEO_PUBLISH_GATE"
+        : "YOUTUBE_OAUTH_UPLOAD",
+
     createdAt:
       new Date().toISOString()
   };
@@ -633,42 +648,44 @@ export function canUploadToYouTube(
   ) {
     return {
       allowed: false,
+
       reason:
         "YouTube upload job is not authorized."
     };
   }
 
-  if (
-    isEmergencyStopActive()
-  ) {
+  const systemCheck =
+    validateSystemState();
+
+  if (!systemCheck.allowed) {
     return {
       allowed: false,
+
       reason:
-        "Emergency Stop is active."
+        systemCheck.reason
     };
   }
 
-  if (
-    getSystemMode() === "STOP"
-  ) {
-    return {
-      allowed: false,
-      reason:
-        "System mode is STOP."
-    };
-  }
-
+  /*
+   * CEO approval is intentionally NOT checked here.
+   *
+   * publishGate.js owns the final CEO decision.
+   */
   return {
     allowed: true,
+
     reason:
-      "Upload job passed the required authorization checks."
+      "Upload job passed technical and safety upload checks."
   };
 }
 
 export function getYouTubeUploadGuardStatus() {
   return {
     configured: true,
-    status: "READY",
+
+    status:
+      "READY",
+
     checks: [
       "production manifest",
       "final video exists",
@@ -681,20 +698,27 @@ export function getYouTubeUploadGuardStatus() {
       "risk level",
       "duplicate protection",
       "copyright protection",
-      "CEO authorization",
+      "system mode",
       "Emergency Stop"
     ],
+
     defaultPrivacy:
+      config.youtube.privacyStatus ||
       "private",
+
     publishGate:
-      "UPLOAD_READY_REQUIRED",
+      "CEO_PUBLISH_GATE",
+
     youtubeCredentials:
       hasYouTubeCredentials(),
+
     systemMode:
       getSystemMode(),
+
     emergencyStop:
       isEmergencyStopActive(),
+
     message:
-      "YouTube upload authorization gate is ready."
+      "YouTube upload authorization gate is ready. Final CEO approval is handled by publishGate.js."
   };
 }
