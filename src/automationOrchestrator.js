@@ -119,7 +119,9 @@ async function readState() {
 
     return {
       dailyCount:
-        Number(state.dailyCount || 0),
+        Number(
+          state.dailyCount || 0
+        ),
 
       date:
         state.date ||
@@ -164,6 +166,7 @@ async function writeState(state) {
 
   const nextState = {
     ...state,
+
     updatedAt:
       new Date().toISOString()
   };
@@ -188,10 +191,10 @@ async function appendLog(entry) {
     LOG_FILE,
     `${JSON.stringify({
       ...entry,
+
       loggedAt:
         new Date().toISOString()
-    })}\n`,
-    "utf8"
+    })}\n`
   );
 }
 
@@ -203,11 +206,17 @@ function resetDailyStateIfNeeded(
       .toISOString()
       .slice(0, 10);
 
-  if (state.date !== today) {
+  if (
+    state.date !== today
+  ) {
     return {
       ...state,
-      date: today,
-      dailyCount: 0
+
+      date:
+        today,
+
+      dailyCount:
+        0
     };
   }
 
@@ -217,22 +226,26 @@ function resetDailyStateIfNeeded(
 function getDailyLimitStatus(
   state
 ) {
+  const used =
+    Number(
+      state.dailyCount || 0
+    );
+
   return {
     limit:
       MAX_DAILY_VIDEOS,
 
-    used:
-      Number(state.dailyCount || 0),
+    used,
 
     remaining:
       Math.max(
         0,
         MAX_DAILY_VIDEOS -
-          Number(state.dailyCount || 0)
+          used
       ),
 
     reached:
-      Number(state.dailyCount || 0) >=
+      used >=
       MAX_DAILY_VIDEOS
   };
 }
@@ -434,7 +447,9 @@ function selectTrend(
     extractTrendList(
       trends
     )
-      .map(normalizeTrend)
+      .map(
+        normalizeTrend
+      )
       .filter(
         (item) =>
           cleanText(
@@ -487,13 +502,27 @@ function calculateRiskLevel({
   if (
     research?.success === false
   ) {
-    risks.push("MEDIUM");
+    risks.push(
+      "MEDIUM"
+    );
   }
 
   if (
     research?.verified === false
   ) {
-    risks.push("MEDIUM");
+    risks.push(
+      "MEDIUM"
+    );
+  }
+
+  if (
+    research?.riskLevel
+  ) {
+    risks.push(
+      String(
+        research.riskLevel
+      ).toUpperCase()
+    );
   }
 
   if (
@@ -520,17 +549,23 @@ function calculateRiskLevel({
     duplicate?.isDuplicate === true ||
     duplicate?.duplicate === true
   ) {
-    risks.push("HIGH");
+    risks.push(
+      "HIGH"
+    );
   }
 
   if (
-    risks.includes("HIGH")
+    risks.includes(
+      "HIGH"
+    )
   ) {
     return "HIGH";
   }
 
   if (
-    risks.includes("MEDIUM")
+    risks.includes(
+      "MEDIUM"
+    )
   ) {
     return "MEDIUM";
   }
@@ -542,7 +577,8 @@ function shouldRequireCEOApproval(
   riskLevel
 ) {
   return (
-    riskLevel !== "LOW"
+    riskLevel !==
+    "LOW"
   );
 }
 
@@ -594,7 +630,7 @@ async function loadExistingContent() {
         return data.content;
       }
     } catch {
-      // Continue to next possible history file.
+      // Continue to the next history file.
     }
   }
 
@@ -691,14 +727,19 @@ export async function runAutomation({
       await readState()
     );
 
-  await writeState(state);
+  state =
+    await writeState(
+      state
+    );
 
   const limit =
     getDailyLimitStatus(
       state
     );
 
-  if (limit.reached) {
+  if (
+    limit.reached
+  ) {
     await appendLog({
       runId,
 
@@ -719,14 +760,34 @@ export async function runAutomation({
     };
   }
 
-  const systemStatus =
-    getSystemStatus();
+  let systemStatus;
 
-  const automationAllowed =
-    canRunAutomation();
+  try {
+    systemStatus =
+      getSystemStatus();
+  } catch (error) {
+    systemStatus = {
+      status:
+        "UNKNOWN",
+
+      error:
+        error?.message ||
+        String(error)
+    };
+  }
+
+  let automationAllowed;
+
+  try {
+    automationAllowed =
+      canRunAutomation();
+  } catch {
+    automationAllowed =
+      false;
+  }
 
   if (
-    automationAllowed === false
+    automationAllowed !== true
   ) {
     await appendLog({
       runId,
@@ -766,14 +827,16 @@ export async function runAutomation({
   });
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 1. TREND DISCOVERY
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   let selectedTrend = null;
 
-  if (explicitTopic) {
+  if (
+    explicitTopic
+  ) {
     selectedTrend = {
       topic:
         explicitTopic,
@@ -781,7 +844,8 @@ export async function runAutomation({
       title:
         explicitTopic,
 
-      rank: 1,
+      rank:
+        1,
 
       source:
         "manual"
@@ -825,7 +889,9 @@ export async function runAutomation({
         trendStage.result
       );
 
-    if (!selectedTrend) {
+    if (
+      !selectedTrend
+    ) {
       await appendLog({
         runId,
 
@@ -852,10 +918,30 @@ export async function runAutomation({
       selectedTrend.topic
     );
 
+  if (
+    !selectedTopic
+  ) {
+    await appendLog({
+      runId,
+
+      status:
+        "INVALID_TOPIC"
+    });
+
+    return {
+      success: false,
+
+      status:
+        "INVALID_TOPIC",
+
+      runId
+    };
+  }
+
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 2. RESEARCH
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   const researchStage =
@@ -931,9 +1017,9 @@ export async function runAutomation({
   }
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 3. SCRIPT GENERATION
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   const scriptStage =
@@ -1012,9 +1098,9 @@ export async function runAutomation({
   }
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 4. SAFETY
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   const safetyStage =
@@ -1062,16 +1148,23 @@ export async function runAutomation({
   const safety =
     safetyStage.result;
 
+  const safetyRisk =
+    String(
+      safety?.riskLevel ||
+      ""
+    ).toUpperCase();
+
   const safetyBlocked =
     safety?.blocked === true ||
     safety?.allowed === false ||
-    safety?.safe === false &&
-      String(
-        safety?.riskLevel || ""
-      ).toUpperCase() ===
-        "HIGH";
+    (
+      safety?.safe === false &&
+      safetyRisk === "HIGH"
+    );
 
-  if (safetyBlocked) {
+  if (
+    safetyBlocked
+  ) {
     await appendLog({
       runId,
 
@@ -1095,9 +1188,9 @@ export async function runAutomation({
   }
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 5. COPYRIGHT
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   const copyrightStage =
@@ -1142,12 +1235,16 @@ export async function runAutomation({
   const copyright =
     copyrightStage.result;
 
+  const copyrightRisk =
+    String(
+      copyright?.riskLevel ||
+      ""
+    ).toUpperCase();
+
   const copyrightBlocked =
     copyright?.blocked === true ||
     copyright?.allowed === false ||
-    String(
-      copyright?.riskLevel || ""
-    ).toUpperCase() ===
+    copyrightRisk ===
       "HIGH";
 
   if (
@@ -1176,9 +1273,9 @@ export async function runAutomation({
   }
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 6. DUPLICATE CHECK
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   const existingContent =
@@ -1256,9 +1353,9 @@ export async function runAutomation({
   }
 
   /*
-   * ---------------------------------------------------------
-   * 7. RISK CALCULATION
-   * ---------------------------------------------------------
+   * =========================================================
+   * 7. RISK ENGINE
+   * =========================================================
    */
 
   const riskLevel =
@@ -1275,9 +1372,9 @@ export async function runAutomation({
     );
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 8. SUPPORTING CONTENT
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   const supportingStage =
@@ -1292,9 +1389,9 @@ export async function runAutomation({
     });
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 9. FINAL SHORT PRODUCTION
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   const productionStage =
@@ -1352,9 +1449,9 @@ export async function runAutomation({
     productionStage.result;
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 10. PRODUCTION MANIFEST
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   const manifest =
@@ -1380,9 +1477,9 @@ export async function runAutomation({
     });
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 11. FINAL VIDEO QA
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   const finalVideoFile =
@@ -1390,6 +1487,37 @@ export async function runAutomation({
       ?.outputFile ||
     production?.finalVideoFile ||
     production?.outputFile;
+
+  if (
+    !cleanText(
+      finalVideoFile
+    )
+  ) {
+    await appendLog({
+      runId,
+
+      status:
+        "FINAL_VIDEO_MISSING"
+    });
+
+    return {
+      success: false,
+
+      status:
+        "FINAL_VIDEO_MISSING",
+
+      runId,
+
+      topic:
+        selectedTopic,
+
+      riskLevel,
+
+      manifest,
+
+      production
+    };
+  }
 
   const qaStage =
     await runStage(
@@ -1473,9 +1601,9 @@ export async function runAutomation({
   }
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * 12. CEO APPROVAL GATE
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   let approval = null;
@@ -1553,7 +1681,6 @@ export async function runAutomation({
       riskLevel,
 
       requiresCEOApproval:
-
         true,
 
       manifest,
@@ -1578,12 +1705,14 @@ export async function runAutomation({
   }
 
   /*
-   * ---------------------------------------------------------
-   * 13. DRY RUN GATE
-   * ---------------------------------------------------------
+   * =========================================================
+   * 13. DRY RUN
+   * =========================================================
    */
 
-  if (dryRun) {
+  if (
+    dryRun
+  ) {
     await appendLog({
       runId,
 
@@ -1618,6 +1747,9 @@ export async function runAutomation({
 
       riskLevel,
 
+      requiresCEOApproval:
+        false,
+
       manifest,
 
       production,
@@ -1638,10 +1770,25 @@ export async function runAutomation({
   }
 
   /*
-   * ---------------------------------------------------------
-   * 14. LOW-RISK READY FOR YOUTUBE
-   * ---------------------------------------------------------
+   * =========================================================
+   * 14. READY FOR YOUTUBE
+   * =========================================================
+   *
+   * This orchestrator does NOT directly upload to YouTube.
+   *
+   * YouTube OAuth/upload remains behind the dedicated
+   * YouTube production pipeline and publishing guards.
+   * =========================================================
    */
+
+  let learningReport = null;
+
+  try {
+    learningReport =
+      await getContentLearningReport();
+  } catch {
+    learningReport = null;
+  }
 
   state =
     await writeState({
@@ -1674,6 +1821,287 @@ export async function runAutomation({
       state.dailyCount
   });
 
-  /*
-   * NOTE:
-   * This orchestrator deliberately does NOT upload to You
+  return {
+    success: true,
+
+    status:
+      "READY_FOR_YOUTUBE",
+
+    runId,
+
+    topic:
+      selectedTopic,
+
+    title:
+      cleanText(
+        title ||
+        selectedTopic
+      ),
+
+    description:
+      cleanText(
+        description
+      ),
+
+    language,
+
+    riskLevel,
+
+    requiresCEOApproval:
+      false,
+
+    manifest,
+
+    production,
+
+    qa,
+
+    supportingContent:
+      supportingStage,
+
+    learningReport,
+
+    dailyLimit:
+      getDailyLimitStatus(
+        state
+      ),
+
+    nextStage:
+      "YOUTUBE_UPLOAD",
+
+    createdAt:
+      new Date().toISOString()
+  };
+}
+
+export async function runAutomationCycle(
+  options = {}
+) {
+  return runAutomation(
+    options
+  );
+}
+
+export async function getAutomationStatus() {
+  let state =
+    resetDailyStateIfNeeded(
+      await readState()
+    );
+
+  state =
+    await writeState(
+      state
+    );
+
+  let systemStatus = null;
+
+  try {
+    systemStatus =
+      getSystemStatus();
+  } catch (error) {
+    systemStatus = {
+      status:
+        "UNKNOWN",
+
+      error:
+        error?.message ||
+        String(error)
+    };
+  }
+
+  let canRun = false;
+
+  try {
+    canRun =
+      canRunAutomation() ===
+      true;
+  } catch {
+    canRun = false;
+  }
+
+  let learningReport = null;
+
+  try {
+    learningReport =
+      await getContentLearningReport();
+  } catch {
+    learningReport = null;
+  }
+
+  const dailyLimit =
+    getDailyLimitStatus(
+      state
+    );
+
+  return {
+    configured: true,
+
+    status:
+      "READY",
+
+    automation: {
+      canRun,
+
+      maxDailyVideos:
+        MAX_DAILY_VIDEOS,
+
+      retriesPerStage:
+        MAX_STAGE_RETRIES
+    },
+
+    dailyLimit,
+
+    state,
+
+    system:
+      systemStatus,
+
+    learning:
+      learningReport,
+
+    pipeline: [
+      "TREND_RADAR",
+      "RESEARCH",
+      "SCRIPT",
+      "SAFETY",
+      "COPYRIGHT",
+      "DUPLICATE",
+      "RISK_ENGINE",
+      "SUPPORTING_CONTENT",
+      "VOICE",
+      "VISUALS",
+      "VIDEO",
+      "CAPTIONS",
+      "FINAL_RENDER",
+      "QUALITY_ASSURANCE",
+      "CEO_APPROVAL",
+      "YOUTUBE_UPLOAD"
+    ],
+
+    publishing:
+      "SEPARATE_YOUTUBE_PIPELINE",
+
+    message:
+      "Automation orchestrator is ready. Maximum five Shorts per day. Final YouTube publishing remains behind dedicated upload and CEO safety gates."
+  };
+}
+
+export async function previewAutomation(
+  options = {}
+) {
+  return runAutomation({
+    ...options,
+
+    dryRun:
+      true
+  });
+}
+
+export async function resetAutomationDailyCounter() {
+  const state =
+    await readState();
+
+  const today =
+    new Date()
+      .toISOString()
+      .slice(0, 10);
+
+  const nextState =
+    await writeState({
+      ...state,
+
+      date:
+        today,
+
+      dailyCount:
+        0,
+
+      lastStatus:
+        "DAILY_COUNTER_RESET"
+    });
+
+  await appendLog({
+    status:
+      "DAILY_COUNTER_RESET"
+  });
+
+  return {
+    success: true,
+
+    status:
+      "DAILY_COUNTER_RESET",
+
+    state:
+      nextState
+  };
+}
+
+export async function getAutomationLog({
+  limit = 50
+} = {}) {
+  await ensureAutomationStorage();
+
+  try {
+    const raw =
+      await fs.readFile(
+        LOG_FILE,
+        "utf8"
+      );
+
+    const lines =
+      raw
+        .split("\n")
+        .filter(Boolean);
+
+    const safeLimit =
+      Math.max(
+        1,
+        Number(
+          limit || 50
+        )
+      );
+
+    return {
+      success: true,
+
+      items:
+        lines
+          .slice(
+            -safeLimit
+          )
+          .map(
+            (line) => {
+              try {
+                return JSON.parse(
+                  line
+                );
+              } catch {
+                return {
+                  raw: line
+                };
+              }
+            }
+          )
+    };
+  } catch {
+    return {
+      success: true,
+
+      items: []
+    };
+  }
+}
+
+export default {
+  runAutomation,
+
+  runAutomationCycle,
+
+  getAutomationStatus,
+
+  previewAutomation,
+
+  resetAutomationDailyCounter,
+
+  getAutomationLog
+};
