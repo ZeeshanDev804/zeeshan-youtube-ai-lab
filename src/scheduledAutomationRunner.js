@@ -21,22 +21,7 @@ import {
   failReliabilityJob
 } from "./automationReliability.js";
 
-
 const DAILY_TARGET_VIDEOS = 5;
-
-
-/*
-|--------------------------------------------------------------------------
-| SUPPORTED REGIONS
-|--------------------------------------------------------------------------
-|
-| Daily target = 5
-| This is NOT a hard maximum.
-|
-| Strong/safe topics can continue beyond 5.
-|
-|--------------------------------------------------------------------------
-*/
 
 const REGIONS = [
   "USA",
@@ -45,18 +30,25 @@ const REGIONS = [
   "MIDDLE_EAST"
 ];
 
-
 function cleanText(value = "") {
   return String(value)
     .replace(/\s+/g, " ")
     .trim();
 }
 
-
 function createRunId(region) {
   return `scheduled-${cleanText(region).toLowerCase()}-${Date.now()}`;
 }
 
+function normalizeRequestedVideos(value = 1) {
+  return Math.max(
+    1,
+    Math.min(
+      50,
+      Math.floor(Number(value) || 1)
+    )
+  );
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -65,51 +57,36 @@ function createRunId(region) {
 */
 
 async function checkCEOState() {
-
   const status =
     await getCEOAutomationStatus();
 
-
   if (status?.emergencyStop) {
-
     return {
       allowed: false,
-
-      status:
-        "EMERGENCY_STOP",
-
+      status: "EMERGENCY_STOP",
       reason:
         status.emergencyStopReason ||
         "CEO emergency stop is active."
     };
   }
 
-
   if (status?.mode === "STOP") {
-
     return {
       allowed: false,
-
-      status:
-        "CEO_STOP",
-
+      status: "CEO_STOP",
       reason:
         "CEO automation mode is STOP."
     };
   }
 
-
   return {
     allowed: true,
-
-    status:
-      "CEO_READY",
-
+    status: "CEO_READY",
     mode:
-      status?.mode || "AUTO"
+      status?.mode ||
+      "AUTO"
   };
 }
-
 
 /*
 |--------------------------------------------------------------------------
@@ -124,9 +101,7 @@ export async function runScheduledRegion({
 } = {}) {
 
   const normalizedRegion =
-    cleanText(region)
-      .toUpperCase();
-
+    cleanText(region).toUpperCase();
 
   /*
    * Validate region.
@@ -137,37 +112,18 @@ export async function runScheduledRegion({
       normalizedRegion
     )
   ) {
-
     return {
       success: false,
-
-      status:
-        "INVALID_REGION",
-
-      region:
-        normalizedRegion
+      skipped: false,
+      status: "INVALID_REGION",
+      region: normalizedRegion
     };
   }
 
-
-  /*
-   * Normalize requested videos.
-   *
-   * 5 is the normal daily target.
-   * It is NOT a hard maximum.
-   */
-
   const normalizedRequestedVideos =
-    Math.max(
-      1,
-      Math.min(
-        50,
-        Math.floor(
-          Number(requestedVideos) || 1
-        )
-      )
+    normalizeRequestedVideos(
+      requestedVideos
     );
-
 
   /*
    * First CEO safety check.
@@ -176,44 +132,85 @@ export async function runScheduledRegion({
   const ceo =
     await checkCEOState();
 
-
   if (!ceo.allowed) {
-
     return {
       success: false,
-
-      status:
-        ceo.status,
-
-      reason:
-        ceo.reason,
-
-      region:
-        normalizedRegion
+      skipped: false,
+      status: ceo.status,
+      reason: ceo.reason,
+      region: normalizedRegion
     };
   }
 
-
   /*
-   * Check worldwide scheduler window.
+   * Check worldwide schedule.
    */
 
   const evaluation =
     await evaluateSchedule({
-      region:
-        normalizedRegion,
-
+      region: normalizedRegion,
       requestedVideos:
         normalizedRequestedVideos,
-
       date
     });
 
+  /*
+   * IMPORTANT:
+   *
+   * OUTSIDE_SCHEDULE_WINDOW is a NORMAL SKIP.
+   *
+   * It must NOT become success:false.
+   * Otherwise GitHub Actions treats a normal
+   * waiting period as a failed workflow.
+   */
+
+  if (
+    evaluation?.status ===
+    "OUTSIDE_SCHEDULE_WINDOW"
+  ) {
+    return {
+      success: true,
+
+      skipped: true,
+
+      status:
+        "OUTSIDE_SCHEDULE_WINDOW",
+
+      reason:
+        "Region is currently outside its scheduled automation window.",
+
+      region:
+        normalizedRegion,
+
+      scheduleSlotId:
+        null,
+
+      reservationKey:
+        null,
+
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+
+      targetIsHardMaximum:
+        false,
+
+      canContinueBeyondTarget:
+        true,
+
+      qualityOverQuantity:
+        true
+    };
+  }
+
+  /*
+   * Other scheduler blocks are real blocks.
+   */
 
   if (!evaluation?.allowed) {
-
     return {
       success: false,
+
+      skipped: false,
 
       status:
         evaluation?.status ||
@@ -236,7 +233,6 @@ export async function runScheduledRegion({
     };
   }
 
-
   /*
    * Create unique run ID.
    */
@@ -246,13 +242,8 @@ export async function runScheduledRegion({
       normalizedRegion
     );
 
-
   /*
-   * Reserve this exact schedule slot.
-   *
-   * This does NOT create a daily video limit.
-   * It only prevents the same schedule slot
-   * from running twice.
+   * Reserve exact schedule slot.
    */
 
   const reservation =
@@ -265,11 +256,59 @@ export async function runScheduledRegion({
       date
     });
 
+  /*
+   * Safety:
+   *
+   * If reservation says outside window,
+   * treat it as a normal skip.
+   */
 
-  if (!reservation?.success) {
+  if (
+    reservation?.status ===
+    "OUTSIDE_SCHEDULE_WINDOW"
+  ) {
+    return {
+      success: true,
 
+      skipped: true,
+
+      status:
+        "OUTSIDE_SCHEDULE_WINDOW",
+
+      reason:
+        reservation?.reason ||
+        "Region is outside its scheduled window.",
+
+      region:
+        normalizedRegion,
+
+      scheduleSlotId:
+        null,
+
+      reservationKey:
+        null,
+
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+
+      targetIsHardMaximum:
+        false,
+
+      canContinueBeyondTarget:
+        true,
+
+      qualityOverQuantity:
+        true
+    };
+  }
+
+  if (
+    !reservation?.success
+  ) {
     return {
       success: false,
+
+      skipped: false,
 
       status:
         reservation?.status ||
@@ -294,60 +333,71 @@ export async function runScheduledRegion({
     };
   }
 
-
   /*
    * Same schedule slot already executed.
+   *
+   * This is also a NORMAL SKIP.
    */
 
   if (
-    reservation.status ===
-    "ALREADY_RESERVED"
+    reservation?.status ===
+      "ALREADY_RESERVED" ||
+    reservation?.status ===
+      "ALREADY_RUN" ||
+    reservation?.skipped === true
   ) {
-
     return {
       success: true,
 
+      skipped: true,
+
       status:
-        "SLOT_ALREADY_RESERVED",
+        reservation?.status ===
+          "ALREADY_RUN"
+          ? "SLOT_ALREADY_RUN"
+          : "SLOT_ALREADY_RESERVED",
 
       region:
         normalizedRegion,
 
       scheduleSlotId:
-        reservation.scheduleSlotId ||
-        evaluation.scheduleSlotId ||
+        reservation?.scheduleSlotId ||
+        evaluation?.scheduleSlotId ||
         null,
 
       reservationKey:
-        reservation.reservationKey ||
-        evaluation.reservationKey ||
+        reservation?.reservationKey ||
+        evaluation?.reservationKey ||
         null,
 
-      skipped: true,
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+
+      targetIsHardMaximum:
+        false,
+
+      canContinueBeyondTarget:
+        true,
+
+      qualityOverQuantity:
+        true,
 
       reason:
-        "This schedule slot was already reserved."
+        reservation?.reason ||
+        "This schedule slot was already processed."
     };
   }
 
-
   /*
    * Reliability tracking.
-   *
-   * IMPORTANT:
-   * Current automationReliability.js uses
-   * createReliabilityJob() and runId.
    */
 
-  let reliabilityJob =
-    null;
-
+  let reliabilityJob = null;
 
   try {
 
     reliabilityJob =
       await createReliabilityJob({
-
         runId,
 
         topic:
@@ -357,20 +407,12 @@ export async function runScheduledRegion({
           "SCHEDULED_AUTOMATION"
       });
 
-
-    /*
-     * If the job already exists,
-     * the same persistent job is reused.
-     */
-
     const reliabilityRunId =
       reliabilityJob?.job?.runId ||
       runId;
 
-
     /*
-     * Store scheduler metadata in the
-     * reliability job.
+     * Store scheduler metadata.
      */
 
     if (
@@ -388,13 +430,13 @@ export async function runScheduledRegion({
           normalizedRegion,
 
         scheduleSlotId:
-          reservation.scheduleSlotId ||
-          evaluation.scheduleSlotId ||
+          reservation?.scheduleSlotId ||
+          evaluation?.scheduleSlotId ||
           null,
 
         reservationKey:
-          reservation.reservationKey ||
-          evaluation.reservationKey ||
+          reservation?.reservationKey ||
+          evaluation?.reservationKey ||
           null,
 
         dailyTarget:
@@ -405,20 +447,16 @@ export async function runScheduledRegion({
       };
     }
 
-
     /*
-     * Final CEO safety check immediately
-     * before automation starts.
+     * Final CEO safety check.
      */
 
     const finalCEOCheck =
       await checkCEOState();
 
-
     if (!finalCEOCheck.allowed) {
 
       await failReliabilityJob({
-
         runId:
           reliabilityRunId,
 
@@ -432,7 +470,6 @@ export async function runScheduledRegion({
           "CEO_FINAL_SAFETY_CHECK",
 
         metadata: {
-
           region:
             normalizedRegion,
 
@@ -441,10 +478,10 @@ export async function runScheduledRegion({
         }
       });
 
-
       return {
-
         success: false,
+
+        skipped: false,
 
         status:
           finalCEOCheck.status,
@@ -459,13 +496,10 @@ export async function runScheduledRegion({
       };
     }
 
-
     /*
      * Automation start gate.
      *
-     * There is NO hard daily maximum.
-     *
-     * The target of 5 is informational.
+     * 5 is NOT a hard maximum.
      */
 
     const startCheck =
@@ -474,11 +508,9 @@ export async function runScheduledRegion({
           normalizedRequestedVideos
       });
 
-
     if (!startCheck?.allowed) {
 
       await failReliabilityJob({
-
         runId:
           reliabilityRunId,
 
@@ -493,7 +525,6 @@ export async function runScheduledRegion({
           "AUTOMATION_START_GATE",
 
         metadata: {
-
           region:
             normalizedRegion,
 
@@ -503,10 +534,10 @@ export async function runScheduledRegion({
         }
       });
 
-
       return {
-
         success: false,
+
+        skipped: false,
 
         status:
           startCheck?.status ||
@@ -523,17 +554,12 @@ export async function runScheduledRegion({
       };
     }
 
-
     /*
-     * Run actual automation cycle.
-     *
-     * The orchestrator decides whether
-     * topics are good, original and safe.
+     * Run actual automation.
      */
 
     const result =
       await runAutomationCycle({
-
         region:
           normalizedRegion,
 
@@ -543,20 +569,16 @@ export async function runScheduledRegion({
           normalizedRequestedVideos
       });
 
-
-    /*
-     * Determine whether the automation cycle
-     * itself completed successfully.
-     */
-
     const automationSucceeded =
       result?.success !== false;
 
+    /*
+     * Reliability result.
+     */
 
     if (automationSucceeded) {
 
       await completeReliabilityJob({
-
         runId:
           reliabilityRunId,
 
@@ -566,13 +588,13 @@ export async function runScheduledRegion({
             normalizedRegion,
 
           scheduleSlotId:
-            reservation.scheduleSlotId ||
-            evaluation.scheduleSlotId ||
+            reservation?.scheduleSlotId ||
+            evaluation?.scheduleSlotId ||
             null,
 
           reservationKey:
-            reservation.reservationKey ||
-            evaluation.reservationKey ||
+            reservation?.reservationKey ||
+            evaluation?.reservationKey ||
             null,
 
           requestedVideos:
@@ -584,27 +606,32 @@ export async function runScheduledRegion({
 
           produced:
             Number(
-              result?.counts?.produced || 0
+              result?.counts?.produced ||
+              0
             ),
 
           ready:
             Number(
-              result?.counts?.ready || 0
+              result?.counts?.ready ||
+              0
             ),
 
           review:
             Number(
-              result?.counts?.review || 0
+              result?.counts?.review ||
+              0
             ),
 
           blocked:
             Number(
-              result?.counts?.blocked || 0
+              result?.counts?.blocked ||
+              0
             ),
 
           failed:
             Number(
-              result?.counts?.failed || 0
+              result?.counts?.failed ||
+              0
             )
         }
       });
@@ -612,7 +639,6 @@ export async function runScheduledRegion({
     } else {
 
       await failReliabilityJob({
-
         runId:
           reliabilityRunId,
 
@@ -627,7 +653,6 @@ export async function runScheduledRegion({
           "AUTOMATION_CYCLE",
 
         metadata: {
-
           region:
             normalizedRegion,
 
@@ -638,11 +663,11 @@ export async function runScheduledRegion({
       });
     }
 
-
     return {
-
       success:
         automationSucceeded,
+
+      skipped: false,
 
       status:
         automationSucceeded
@@ -655,13 +680,13 @@ export async function runScheduledRegion({
       runId,
 
       scheduleSlotId:
-        reservation.scheduleSlotId ||
-        evaluation.scheduleSlotId ||
+        reservation?.scheduleSlotId ||
+        evaluation?.scheduleSlotId ||
         null,
 
       reservationKey:
-        reservation.reservationKey ||
-        evaluation.reservationKey ||
+        reservation?.reservationKey ||
+        evaluation?.reservationKey ||
         null,
 
       dailyTarget:
@@ -679,12 +704,10 @@ export async function runScheduledRegion({
       result
     };
 
-
   } catch (error) {
 
     /*
-     * Never allow a reliability failure
-     * to hide the original automation error.
+     * Never hide the original automation error.
      */
 
     if (reliabilityJob) {
@@ -692,7 +715,6 @@ export async function runScheduledRegion({
       try {
 
         await failReliabilityJob({
-
           runId:
             reliabilityJob?.job?.runId ||
             runId,
@@ -703,23 +725,20 @@ export async function runScheduledRegion({
             "SCHEDULED_AUTOMATION",
 
           metadata: {
-
             region:
               normalizedRegion
           }
         });
 
       } catch {
-        /*
-         * Keep original error.
-         */
+        // Keep original error.
       }
     }
 
-
     return {
-
       success: false,
+
+      skipped: false,
 
       status:
         "SCHEDULED_AUTOMATION_FAILED",
@@ -736,7 +755,6 @@ export async function runScheduledRegion({
   }
 }
 
-
 /*
 |--------------------------------------------------------------------------
 | RUN ALL REGIONS
@@ -744,27 +762,16 @@ export async function runScheduledRegion({
 */
 
 export async function runScheduledAutomation({
-
   requestedVideos = 1,
-
   date = new Date()
-
 } = {}) {
 
   const normalizedRequestedVideos =
-    Math.max(
-      1,
-      Math.min(
-        50,
-        Math.floor(
-          Number(requestedVideos) || 1
-        )
-      )
+    normalizeRequestedVideos(
+      requestedVideos
     );
 
-
   const results = [];
-
 
   for (
     const region of REGIONS
@@ -772,7 +779,6 @@ export async function runScheduledAutomation({
 
     const result =
       await runScheduledRegion({
-
         region,
 
         requestedVideos:
@@ -781,35 +787,73 @@ export async function runScheduledAutomation({
         date
       });
 
-
-    results.push(
-      result
-    );
+    results.push(result);
   }
 
+  /*
+   * Actual successful automation runs.
+   */
 
   const successfulRuns =
     results.filter(
       (item) =>
-        item?.success
+        item?.success === true &&
+        item?.skipped !== true
     );
 
+  /*
+   * Normal scheduler skips.
+   */
 
   const skippedRuns =
     results.filter(
       (item) =>
+        item?.skipped === true ||
         item?.status ===
-        "SLOT_ALREADY_RESERVED"
+          "OUTSIDE_SCHEDULE_WINDOW" ||
+        item?.status ===
+          "SLOT_ALREADY_RESERVED" ||
+        item?.status ===
+          "SLOT_ALREADY_RUN"
     );
 
+  /*
+   * Real failures only.
+   */
+
+  const failedRuns =
+    results.filter(
+      (item) =>
+        item?.success === false
+    );
+
+  /*
+   * IMPORTANT:
+   *
+   * If all regions are currently outside
+   * their local schedule windows, that is NOT
+   * a failed workflow.
+   *
+   * GitHub Actions should finish successfully
+   * and wait for the next 15-minute run.
+   */
+
+  const onlyNormalSkips =
+    failedRuns.length === 0;
 
   return {
 
     success:
-      successfulRuns.length > 0,
+      onlyNormalSkips,
 
     status:
-      "SCHEDULED_AUTOMATION_COMPLETE",
+      onlyNormalSkips
+        ? (
+            successfulRuns.length > 0
+              ? "SCHEDULED_AUTOMATION_COMPLETE"
+              : "SCHEDULED_AUTOMATION_SKIPPED"
+          )
+        : "SCHEDULED_AUTOMATION_COMPLETE_WITH_ERRORS",
 
     dailyTarget:
       DAILY_TARGET_VIDEOS,
@@ -832,10 +876,12 @@ export async function runScheduledAutomation({
     skippedRegions:
       skippedRuns.length,
 
+    failedRegions:
+      failedRuns.length,
+
     results
   };
 }
-
 
 /*
 |--------------------------------------------------------------------------
@@ -843,16 +889,12 @@ export async function runScheduledAutomation({
 |--------------------------------------------------------------------------
 |
 | Preview does NOT generate or publish content.
-|
 |--------------------------------------------------------------------------
 */
 
 export async function previewScheduledAutomation({
-
   region = null,
-
   date = new Date()
-
 } = {}) {
 
   const regionsToPreview =
@@ -863,9 +905,7 @@ export async function previewScheduledAutomation({
         ]
       : REGIONS;
 
-
   const previews = [];
-
 
   for (
     const currentRegion
@@ -884,6 +924,8 @@ export async function previewScheduledAutomation({
           currentRegion,
 
         allowed: false,
+
+        skipped: false,
 
         status:
           "INVALID_REGION",
@@ -913,16 +955,13 @@ export async function previewScheduledAutomation({
       continue;
     }
 
-
     const evaluation =
       await evaluateSchedule({
-
         region:
           currentRegion,
 
         date
       });
-
 
     previews.push({
 
@@ -933,6 +972,10 @@ export async function previewScheduledAutomation({
         Boolean(
           evaluation?.allowed
         ),
+
+      skipped:
+        evaluation?.status ===
+        "OUTSIDE_SCHEDULE_WINDOW",
 
       status:
         evaluation?.status ||
@@ -964,7 +1007,6 @@ export async function previewScheduledAutomation({
     });
   }
 
-
   return {
 
     success: true,
@@ -988,7 +1030,6 @@ export async function previewScheduledAutomation({
   };
 }
 
-
 /*
 |--------------------------------------------------------------------------
 | EMERGENCY STOP HELPER
@@ -996,17 +1037,14 @@ export async function previewScheduledAutomation({
 */
 
 export async function emergencyStopAutomation(
-
   reason =
     "Emergency stop requested by CEO."
-
 ) {
 
   return activateEmergencyStop(
     reason
   );
 }
-
 
 /*
 |--------------------------------------------------------------------------
@@ -1018,7 +1056,6 @@ export async function getScheduledRunnerStatus() {
 
   const ceo =
     await getCEOAutomationStatus();
-
 
   return {
 
@@ -1035,6 +1072,9 @@ export async function getScheduledRunnerStatus() {
 
     targetIsHardMaximum:
       false,
+
+    maximumVideosPerDay:
+      null,
 
     canContinueBeyondTarget:
       true,
@@ -1055,12 +1095,14 @@ export async function getScheduledRunnerStatus() {
 
       dailyStarted:
         Number(
-          ceo?.daily?.started || 0
+          ceo?.daily?.started ||
+          0
         ),
 
       dailyCompleted:
         Number(
-          ceo?.daily?.completed || 0
+          ceo?.daily?.completed ||
+          0
         ),
 
       targetReached:
@@ -1070,12 +1112,12 @@ export async function getScheduledRunnerStatus() {
 
       overTarget:
         Number(
-          ceo?.daily?.overTarget || 0
+          ceo?.daily?.overTarget ||
+          0
         )
     }
   };
 }
-
 
 /*
 |--------------------------------------------------------------------------
