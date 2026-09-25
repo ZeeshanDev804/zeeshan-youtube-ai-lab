@@ -41,6 +41,12 @@ const MAX_STAGE_RETRIES = 2;
 
 const DEFAULT_REGION = "USA";
 
+/*
+|--------------------------------------------------------------------------
+| Basic helpers
+|--------------------------------------------------------------------------
+*/
+
 function cleanText(value = "") {
   return String(value)
     .replace(/\s+/g, " ")
@@ -111,6 +117,12 @@ function normalizeRequestedVideos(value) {
     )
   );
 }
+
+/*
+|--------------------------------------------------------------------------
+| Storage
+|--------------------------------------------------------------------------
+*/
 
 async function ensureAutomationStorage() {
   await fs.mkdir(
@@ -241,9 +253,7 @@ function resetDailyStateIfNeeded(state) {
   ) {
     return {
       ...state,
-
       date: today,
-
       dailyCount: 0
     };
   }
@@ -295,6 +305,12 @@ function getDailyLimitStatus(state) {
         : `${remainingToTarget} more video(s) needed to reach the daily target.`
   };
 }
+
+/*
+|--------------------------------------------------------------------------
+| Stage runner
+|--------------------------------------------------------------------------
+*/
 
 async function runStage(
   stageName,
@@ -376,7 +392,11 @@ async function runStage(
 
 /*
 |--------------------------------------------------------------------------
-| TREND EXTRACTION
+| Trend extraction
+|--------------------------------------------------------------------------
+|
+| TrendRadar can expose selected topics through different property names.
+| Accept all supported forms.
 |--------------------------------------------------------------------------
 */
 
@@ -547,13 +567,28 @@ function selectTrends(
       region
     );
 
+  /*
+   * This limit applies only to this individual
+   * automation cycle.
+   *
+   * It is NOT a daily hard maximum.
+   */
+
   return normalized.slice(
     0,
     requested
   );
 }
 
-function getResearchResult(result) {
+/*
+|--------------------------------------------------------------------------
+| Research helpers
+|--------------------------------------------------------------------------
+*/
+
+function getResearchResult(
+  result
+) {
   if (
     result?.result
   ) {
@@ -563,7 +598,9 @@ function getResearchResult(result) {
   return result || null;
 }
 
-function getResearchText(research) {
+function getResearchText(
+  research
+) {
   const claims =
     Array.isArray(
       research?.claims
@@ -618,7 +655,15 @@ function getResearchText(research) {
   );
 }
 
-function getScriptText(result) {
+/*
+|--------------------------------------------------------------------------
+| Script helpers
+|--------------------------------------------------------------------------
+*/
+
+function getScriptText(
+  result
+) {
   if (
     typeof result === "string"
   ) {
@@ -634,6 +679,12 @@ function getScriptText(result) {
   );
 }
 
+/*
+|--------------------------------------------------------------------------
+| Risk
+|--------------------------------------------------------------------------
+*/
+
 function normalizeRisk(value) {
   const risk =
     String(
@@ -641,11 +692,8 @@ function normalizeRisk(value) {
     ).toUpperCase();
 
   if (
-    [
-      "LOW",
-      "MEDIUM",
-      "HIGH"
-    ].includes(risk)
+    ["LOW", "MEDIUM", "HIGH"]
+      .includes(risk)
   ) {
     return risk;
   }
@@ -703,15 +751,13 @@ function calculateRiskLevel({
     ).toUpperCase();
 
   if (
-    copyrightStatus ===
-    "REVIEW"
+    copyrightStatus === "REVIEW"
   ) {
     risks.push("MEDIUM");
   }
 
   if (
-    copyrightStatus ===
-    "BLOCK"
+    copyrightStatus === "BLOCK"
   ) {
     risks.push("HIGH");
   }
@@ -726,6 +772,14 @@ function calculateRiskLevel({
     duplicate?.blocked === true
   ) {
     risks.push("HIGH");
+  }
+
+  if (
+    String(
+      duplicate?.status || ""
+    ).toUpperCase() === "REVIEW"
+  ) {
+    risks.push("MEDIUM");
   }
 
   if (
@@ -750,6 +804,12 @@ function shouldRequireCEOApproval(
     riskLevel !== "LOW"
   );
 }
+
+/*
+|--------------------------------------------------------------------------
+| Existing content
+|--------------------------------------------------------------------------
+*/
 
 async function loadExistingContent() {
   const files = [
@@ -806,6 +866,12 @@ async function loadExistingContent() {
   return [];
 }
 
+/*
+|--------------------------------------------------------------------------
+| Manifest
+|--------------------------------------------------------------------------
+*/
+
 function createManifest({
   runId,
   topic,
@@ -851,6 +917,12 @@ function createManifest({
       new Date().toISOString()
   };
 }
+
+/*
+|--------------------------------------------------------------------------
+| CEO review
+|--------------------------------------------------------------------------
+*/
 
 async function createCEOReview({
   runId,
@@ -902,7 +974,19 @@ async function createCEOReview({
 
 /*
 |--------------------------------------------------------------------------
-| PREVIEW MODE
+| Preview mode
+|--------------------------------------------------------------------------
+|
+| Preview ONLY discovers topics.
+|
+| It does NOT:
+| - research
+| - generate script
+| - generate voice
+| - generate visuals
+| - run FFmpeg
+| - run QA
+| - upload to YouTube
 |--------------------------------------------------------------------------
 */
 
@@ -981,7 +1065,7 @@ async function previewSingleTrend({
 
 /*
 |--------------------------------------------------------------------------
-| PROCESS ONE REAL TREND
+| Process one real trend
 |--------------------------------------------------------------------------
 */
 
@@ -1022,6 +1106,12 @@ async function processSingleTrend({
     });
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | RESEARCH
+  |--------------------------------------------------------------------------
+  */
+
   const researchStage =
     await runStage(
       "RESEARCH",
@@ -1044,7 +1134,8 @@ async function processSingleTrend({
       runId,
       topic,
       region,
-      research: researchStage
+      research:
+        researchStage
     };
   }
 
@@ -1102,6 +1193,12 @@ async function processSingleTrend({
         researchEnvelope
     };
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | SCRIPT
+  |--------------------------------------------------------------------------
+  */
 
   const scriptStage =
     await runStage(
@@ -1170,6 +1267,12 @@ async function processSingleTrend({
       ""
     );
 
+  /*
+  |--------------------------------------------------------------------------
+  | SAFETY
+  |--------------------------------------------------------------------------
+  */
+
   const safetyStage =
     await runStage(
       "SAFETY",
@@ -1220,6 +1323,12 @@ async function processSingleTrend({
       safety
     };
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | COPYRIGHT
+  |--------------------------------------------------------------------------
+  */
 
   const sources =
     Array.isArray(
@@ -1272,8 +1381,7 @@ async function processSingleTrend({
     ).toUpperCase();
 
   if (
-    copyrightStatus ===
-    "BLOCK"
+    copyrightStatus === "BLOCK"
   ) {
     return {
       success: false,
@@ -1287,8 +1395,7 @@ async function processSingleTrend({
   }
 
   if (
-    copyrightStatus !==
-    "PASS"
+    copyrightStatus !== "PASS"
   ) {
     return {
       success: true,
@@ -1302,6 +1409,12 @@ async function processSingleTrend({
         "CEO_APPROVAL"
     };
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | DUPLICATE
+  |--------------------------------------------------------------------------
+  */
 
   const existingContent =
     await loadExistingContent();
@@ -1335,7 +1448,13 @@ async function processSingleTrend({
   const duplicate =
     duplicateStage.result;
 
+  const duplicateStatus =
+    String(
+      duplicate?.status || ""
+    ).toUpperCase();
+
   if (
+    duplicateStatus === "BLOCK" ||
     duplicate?.isDuplicate === true ||
     duplicate?.duplicate === true ||
     duplicate?.blocked === true
@@ -1351,16 +1470,8 @@ async function processSingleTrend({
     };
   }
 
-  /*
-   * Similarity REVIEW must also
-   * go to CEO review.
-   */
-
   if (
-    String(
-      duplicate?.status || ""
-    ).toUpperCase() ===
-    "REVIEW"
+    duplicateStatus === "REVIEW"
   ) {
     return {
       success: true,
@@ -1375,6 +1486,12 @@ async function processSingleTrend({
     };
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | RISK
+  |--------------------------------------------------------------------------
+  */
+
   const riskLevel =
     calculateRiskLevel({
       research,
@@ -1387,6 +1504,12 @@ async function processSingleTrend({
     shouldRequireCEOApproval(
       riskLevel
     );
+
+  /*
+  |--------------------------------------------------------------------------
+  | SUPPORTING CONTENT
+  |--------------------------------------------------------------------------
+  */
 
   let supportingContent = null;
 
@@ -1407,6 +1530,12 @@ async function processSingleTrend({
         String(error)
     };
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | FINAL SHORT PRODUCTION
+  |--------------------------------------------------------------------------
+  */
 
   const productionStage =
     await runStage(
@@ -1442,6 +1571,12 @@ async function processSingleTrend({
   const production =
     productionStage.result;
 
+  /*
+  |--------------------------------------------------------------------------
+  | MANIFEST
+  |--------------------------------------------------------------------------
+  */
+
   const manifest =
     createManifest({
       runId,
@@ -1454,6 +1589,12 @@ async function processSingleTrend({
       production,
       riskLevel
     });
+
+  /*
+  |--------------------------------------------------------------------------
+  | FINAL VIDEO
+  |--------------------------------------------------------------------------
+  */
 
   const finalVideoFile =
     cleanText(
@@ -1479,6 +1620,12 @@ async function processSingleTrend({
       production
     };
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | QUALITY ASSURANCE
+  |--------------------------------------------------------------------------
+  */
 
   const qaStage =
     await runStage(
@@ -1528,6 +1675,12 @@ async function processSingleTrend({
     };
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | CEO REVIEW FOR MEDIUM / HIGH
+  |--------------------------------------------------------------------------
+  */
+
   if (
     requiresCEOApproval
   ) {
@@ -1545,6 +1698,7 @@ async function processSingleTrend({
 
     return {
       success: true,
+
       status:
         "CEO_REVIEW_REQUIRED",
 
@@ -1592,6 +1746,12 @@ async function processSingleTrend({
         "YOUTUBE_UPLOAD_AFTER_CEO_APPROVAL"
     };
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOW-RISK AUTO-PUBLISH READY
+  |--------------------------------------------------------------------------
+  */
 
   let learningReport = null;
 
@@ -1649,6 +1809,12 @@ async function processSingleTrend({
       new Date().toISOString()
   };
 }
+
+/*
+|--------------------------------------------------------------------------
+| MAIN AUTOMATION
+|--------------------------------------------------------------------------
+*/
 
 export async function runAutomation({
   topic = "",
@@ -1776,23 +1942,31 @@ export async function runAutomation({
       false,
 
     canContinueBeyondTarget:
+      true,
+
+    qualityOverQuantity:
       true
   });
 
   let selectedTrends = [];
 
   /*
-   * IMPORTANT:
-   * trendStage is declared outside
-   * the conditional block so it is
-   * safely available for diagnostics.
-   */
+  |--------------------------------------------------------------------------
+  | IMPORTANT FIX
+  |--------------------------------------------------------------------------
+  |
+  | trendStage is declared OUTSIDE the conditional block.
+  |
+  | This prevents:
+  | "trendStage is not defined"
+  |
+  | when selectedTrends is empty.
+  |--------------------------------------------------------------------------
+  */
 
   let trendStage = null;
 
-  if (
-    explicitTopic
-  ) {
+  if (explicitTopic) {
     selectedTrends = [
       {
         topic:
@@ -1865,8 +2039,8 @@ export async function runAutomation({
     }
 
     /*
-     * Accept the actual TrendRadar
-     * selected/fallback topic list.
+     * Accept the actual selected/fallback
+     * list returned by TrendRadar.
      */
 
     selectedTrends =
@@ -1877,20 +2051,39 @@ export async function runAutomation({
       );
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | NO VALID TRENDS
+  |--------------------------------------------------------------------------
+  */
+
   if (
     selectedTrends.length === 0
   ) {
     const trendRadarStatus =
       String(
         trendStage?.result?.status ||
-        "NO_VALID_TRENDS"
+        ""
       ).toUpperCase();
 
     const sourceStatus =
       String(
         trendStage?.result?.sourceStatus ||
-        "UNKNOWN"
+        ""
       ).toUpperCase();
+
+    const trendTopicCount =
+      Number(
+        trendStage?.result?.topicCount ||
+        0
+      );
+
+    const selectedTopicCount =
+      Number(
+        trendStage?.result
+          ?.selectedTopicCount ||
+        0
+      );
 
     await appendLog({
       runId:
@@ -1906,17 +2099,9 @@ export async function runAutomation({
 
       sourceStatus,
 
-      trendRadarTopicCount:
-        Number(
-          trendStage?.result
-            ?.topicCount || 0
-        ),
+      trendTopicCount,
 
-      trendRadarSelectedTopicCount:
-        Number(
-          trendStage?.result
-            ?.selectedTopicCount || 0
-        )
+      selectedTopicCount
     });
 
     return {
@@ -1938,27 +2123,33 @@ export async function runAutomation({
 
       trendRadarStatus,
 
-      sourceStatus
+      sourceStatus,
+
+      trendTopicCount,
+
+      selectedTopicCount
     };
   }
 
   /*
-   * PREVIEW MODE
-   *
-   * Discovery only.
-   *
-   * No research.
-   * No script generation.
-   * No TTS.
-   * No visuals.
-   * No FFmpeg.
-   * No QA.
-   * No YouTube upload.
-   */
+  |--------------------------------------------------------------------------
+  | PREVIEW MODE
+  |--------------------------------------------------------------------------
+  |
+  | Discover topics only.
+  |
+  | No:
+  | research
+  | script
+  | TTS
+  | visuals
+  | FFmpeg
+  | QA
+  | YouTube upload
+  |--------------------------------------------------------------------------
+  */
 
-  if (
-    dryRun
-  ) {
+  if (dryRun) {
     const previewResults = [];
 
     for (
@@ -1983,7 +2174,8 @@ export async function runAutomation({
 
           voiceId,
 
-          dryRun: true,
+          dryRun:
+            true,
 
           region:
             normalizedRegion,
@@ -2124,6 +2316,12 @@ export async function runAutomation({
     };
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | REAL AUTOMATION
+  |--------------------------------------------------------------------------
+  */
+
   const results = [];
 
   for (
@@ -2148,7 +2346,8 @@ export async function runAutomation({
 
         voiceId,
 
-        dryRun: false,
+        dryRun:
+          false,
 
         region:
           normalizedRegion,
@@ -2184,9 +2383,13 @@ export async function runAutomation({
   }
 
   /*
-   * Only real production results
-   * count toward the daily counter.
-   */
+  |--------------------------------------------------------------------------
+  | Production counters
+  |--------------------------------------------------------------------------
+  |
+  | Only actual produced Shorts count.
+  |--------------------------------------------------------------------------
+  */
 
   const producedCount =
     results.filter(
@@ -2235,8 +2438,10 @@ export async function runAutomation({
     ).length;
 
   /*
-   * 5 is a target, NOT a hard maximum.
-   */
+  |--------------------------------------------------------------------------
+  | Daily target is NOT a hard maximum.
+  |--------------------------------------------------------------------------
+  */
 
   const newDailyCount =
     Number(
@@ -2271,10 +2476,15 @@ export async function runAutomation({
       state
     );
 
+  /*
+  |--------------------------------------------------------------------------
+  | Overall status
+  |--------------------------------------------------------------------------
+  */
+
   const status =
-    results.length > 0 &&
     failedCount ===
-      results.length
+    results.length
       ? "AUTOMATION_FAILED"
       : "AUTOMATION_COMPLETED";
 
@@ -2381,6 +2591,12 @@ export async function runAutomation({
   };
 }
 
+/*
+|--------------------------------------------------------------------------
+| Automation cycle
+|--------------------------------------------------------------------------
+*/
+
 export async function runAutomationCycle(
   options = {}
 ) {
@@ -2388,6 +2604,12 @@ export async function runAutomationCycle(
     options
   );
 }
+
+/*
+|--------------------------------------------------------------------------
+| Preview
+|--------------------------------------------------------------------------
+*/
 
 export async function previewAutomation(
   options = {}
@@ -2399,6 +2621,12 @@ export async function previewAutomation(
       true
   });
 }
+
+/*
+|--------------------------------------------------------------------------
+| Automation status
+|--------------------------------------------------------------------------
+*/
 
 export async function getAutomationStatus() {
   const state =
@@ -2413,8 +2641,7 @@ export async function getAutomationStatus() {
       getSystemStatus();
   } catch (error) {
     systemStatus = {
-      status:
-        "UNKNOWN",
+      status: "UNKNOWN",
 
       error:
         error?.message ||
@@ -2469,6 +2696,12 @@ export async function getAutomationStatus() {
   };
 }
 
+/*
+|--------------------------------------------------------------------------
+| Automation log
+|--------------------------------------------------------------------------
+*/
+
 export async function getAutomationLog({
   limit = 50
 } = {}) {
@@ -2502,28 +2735,14 @@ export async function getAutomationLog({
     const entries = [];
 
     for (
-      let index =
-        Math.max(
-          0,
-          lines.length -
-            safeLimit
-        );
-
-      index < lines.length;
-
-      index += 1
+      const line of lines
     ) {
       try {
-        const parsed =
-          JSON.parse(
-            lines[index]
-          );
-
         entries.push(
-          parsed
+          JSON.parse(line)
         );
       } catch {
-        // Ignore malformed log lines.
+        // Ignore malformed log line.
       }
     }
 
@@ -2534,27 +2753,30 @@ export async function getAutomationLog({
         "AUTOMATION_LOG_READY",
 
       count:
-        entries.length,
+        Math.min(
+          entries.length,
+          safeLimit
+        ),
 
-      entries
+      entries:
+        entries.slice(
+          -safeLimit
+        )
     };
   } catch (error) {
     return {
-      success: true,
+      success: false,
 
       status:
-        "AUTOMATION_LOG_EMPTY",
+        "AUTOMATION_LOG_READ_FAILED",
 
       count: 0,
 
       entries: [],
 
       error:
-        error?.code ===
-        "ENOENT"
-          ? null
-          : error?.message ||
-            String(error)
+        error?.message ||
+        String(error)
     };
   }
 }
