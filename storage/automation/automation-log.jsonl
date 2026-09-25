@@ -6,3 +6,5 @@
 {"runId":"scheduled-uk-1790269797375","status":"NO_VALID_TRENDS","region":"UK","loggedAt":"2026-09-24T17:09:57.880Z"}
 {"runId":"scheduled-usa-1790287853340","status":"AUTOMATION_STARTED","topic":null,"region":"USA","requestedVideos":1,"dryRun":false,"dailyTarget":5,"hardDailyMaximum":false,"loggedAt":"2026-09-24T22:10:53.346Z"}
 {"runId":"scheduled-usa-1790287853340","status":"NO_VALID_TRENDS","region":"USA","loggedAt":"2026-09-24T22:10:53.892Z"}
+{"runId":"scheduled-middle_east-1790313005641","status":"AUTOMATION_STARTED","topic":null,"region":"MIDDLE_EAST","requestedVideos":1,"dryRun":false,"dailyTarget":5,"hardDailyMaximum":false,"loggedAt":"2026-09-25T05:10:05.646Z"}
+{"runId":"scheduled-middle_east-1790313005641","status":"NO_VALID_TRENDS","region":"MIDDLE_EAST","loggedAt":"2026-09-25T05:10:06.795Z"}
