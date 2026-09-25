@@ -7,18 +7,11 @@ const GOOGLE_TRENDS_URL =
 |--------------------------------------------------------------------------
 | Worldwide regions
 |--------------------------------------------------------------------------
-|
-| USA       -> US
-| UK        -> GB
-| EUROPE    -> DE, FR, IT, ES, NL
-| MIDDLE_EAST -> AE, SA, QA
-|
-| ALL       -> all supported regions
-|--------------------------------------------------------------------------
 */
 
 const REGION_MAP = {
   USA: ["US"],
+
   UK: ["GB"],
 
   EUROPE: [
@@ -45,11 +38,70 @@ const DEFAULT_REGIONS = [
 
 const MIN_TREND_SCORE = 50;
 
+/*
+|--------------------------------------------------------------------------
+| Safe fallback topics
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+| These are NOT presented as live Google Trends.
+|
+| They are discovery fallback topics used only when
+| the live trend source gives no usable topics.
+|
+| They still have to pass the later:
+| - research
+| - safety
+| - copyright
+| - duplicate
+| - quality
+| - CEO publish
+| gates before publication.
+|--------------------------------------------------------------------------
+*/
+
+const FALLBACK_TOPICS = {
+  USA: [
+    "useful AI tools for everyday work",
+    "AI productivity tips for professionals",
+    "simple technology tips that save time",
+    "useful smartphone features people miss",
+    "practical cybersecurity tips for everyday users"
+  ],
+
+  UK: [
+    "useful AI tools for everyday work",
+    "practical productivity tips",
+    "useful technology tips for everyday life",
+    "simple cybersecurity tips",
+    "AI tools that can save time"
+  ],
+
+  EUROPE: [
+    "useful AI tools for everyday work",
+    "practical technology tips",
+    "AI productivity ideas",
+    "simple cybersecurity tips",
+    "useful digital tools for everyday life"
+  ],
+
+  MIDDLE_EAST: [
+    "useful AI tools for everyday work",
+    "AI productivity tips for professionals",
+    "useful smartphone features",
+    "practical cybersecurity tips",
+    "technology tips that save time",
+    "useful digital tools for everyday life"
+  ]
+};
+
+
 function cleanText(value = "") {
   return String(value)
     .replace(/\s+/g, " ")
     .trim();
 }
+
 
 function safeNumber(value, fallback = 0) {
   const number = Number(value);
@@ -58,6 +110,7 @@ function safeNumber(value, fallback = 0) {
     ? number
     : fallback;
 }
+
 
 function normalizeRegion(region) {
   const value =
@@ -89,6 +142,7 @@ function normalizeRegion(region) {
   return aliases[value] || value;
 }
 
+
 function getGeosForRegion(region = "ALL") {
   const normalized =
     normalizeRegion(region);
@@ -102,6 +156,7 @@ function getGeosForRegion(region = "ALL") {
 
   return REGION_MAP[normalized] || [];
 }
+
 
 function normalizeRequestedVideos(
   requestedVideos
@@ -120,6 +175,7 @@ function normalizeRequestedVideos(
     )
   );
 }
+
 
 function normalizeTopic(
   item,
@@ -175,10 +231,100 @@ function normalizeTopic(
     source:
       "google-trends",
 
+    fallback:
+      false,
+
     collectedAt:
       new Date().toISOString()
   };
 }
+
+
+function createFallbackTopic(
+  title,
+  region,
+  index = 0
+) {
+  return {
+    id:
+      `fallback_${region}_${Date.now()}_${index}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`,
+
+    title:
+      cleanText(title),
+
+    category:
+      "general",
+
+    region,
+
+    geo:
+      "FALLBACK",
+
+    trendScore:
+      50,
+
+    relevanceScore:
+      70,
+
+    originalityScore:
+      65,
+
+    visualScore:
+      75,
+
+    traffic:
+      "",
+
+    source:
+      "safe-fallback",
+
+    fallback:
+      true,
+
+    fallbackReason:
+      "No valid live Google Trends were available for this region.",
+
+    collectedAt:
+      new Date().toISOString()
+  };
+}
+
+
+function getFallbackTopics(
+  region,
+  requestedVideos
+) {
+  const normalizedRegion =
+    normalizeRegion(region);
+
+  const requested =
+    normalizeRequestedVideos(
+      requestedVideos
+    );
+
+  const regionalTopics =
+    FALLBACK_TOPICS[
+      normalizedRegion
+    ] ||
+    FALLBACK_TOPICS.EUROPE;
+
+  return regionalTopics
+    .slice(
+      0,
+      requested
+    )
+    .map(
+      (title, index) =>
+        createFallbackTopic(
+          title,
+          normalizedRegion,
+          index
+        )
+    );
+}
+
 
 async function fetchGoogleDailyTrends(
   geo
@@ -207,6 +353,7 @@ async function fetchGoogleDailyTrends(
    * Google Trends can return
    * a JSON security prefix.
    */
+
   const jsonText =
     raw.replace(
       /^\)\]\}',?\n/,
@@ -221,6 +368,7 @@ async function fetchGoogleDailyTrends(
 
   return searches;
 }
+
 
 function parseTraffic(value) {
   const text =
@@ -258,6 +406,7 @@ function parseTraffic(value) {
     : 0;
 }
 
+
 function scoreTopic(topic) {
   const trafficNumber =
     parseTraffic(
@@ -271,8 +420,26 @@ function scoreTopic(topic) {
     );
 
   /*
-   * Traffic strength
+   * Fallback topics must NOT be
+   * artificially promoted as live trends.
    */
+
+  if (
+    topic?.fallback === true
+  ) {
+    return Math.min(
+      50,
+      Math.max(
+        0,
+        Math.round(trendScore)
+      )
+    );
+  }
+
+  /*
+   * Live Google Trends traffic strength.
+   */
+
   if (trafficNumber >= 1000000) {
     trendScore += 30;
   } else if (trafficNumber >= 500000) {
@@ -283,9 +450,6 @@ function scoreTopic(topic) {
     trendScore += 5;
   }
 
-  /*
-   * Keep score within 0–100.
-   */
   return Math.min(
     100,
     Math.max(
@@ -295,6 +459,7 @@ function scoreTopic(topic) {
   );
 }
 
+
 function calculateTopicScores(
   topic
 ) {
@@ -302,46 +467,82 @@ function calculateTopicScores(
     scoreTopic(topic);
 
   /*
-   * These are discovery-stage
-   * estimates only.
+   * Discovery-stage estimates only.
    *
-   * Research, safety, copyright
-   * and duplicate guards remain
-   * the final protection layers.
+   * Final protection remains in:
+   * research
+   * safety
+   * copyright
+   * duplicate
+   * quality
+   * CEO publish gate
    */
 
   const relevanceScore =
-    Math.min(
-      100,
-      Math.max(
-        0,
-        Math.round(
-          trendScore * 0.9
+    topic?.fallback === true
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            safeNumber(
+              topic?.relevanceScore,
+              70
+            )
+          )
         )
-      )
-    );
+      : Math.min(
+          100,
+          Math.max(
+            0,
+            Math.round(
+              trendScore * 0.9
+            )
+          )
+        );
 
   const visualScore =
-    Math.min(
-      100,
-      Math.max(
-        0,
-        Math.round(
-          trendScore * 0.8
+    topic?.fallback === true
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            safeNumber(
+              topic?.visualScore,
+              75
+            )
+          )
         )
-      )
-    );
+      : Math.min(
+          100,
+          Math.max(
+            0,
+            Math.round(
+              trendScore * 0.8
+            )
+          )
+        );
 
   const originalityScore =
-    Math.min(
-      100,
-      Math.max(
-        0,
-        Math.round(
-          trendScore * 0.75
+    topic?.fallback === true
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            safeNumber(
+              topic?.originalityScore,
+              65
+            )
+          )
         )
-      )
-    );
+      : Math.min(
+          100,
+          Math.max(
+            0,
+            Math.round(
+              trendScore * 0.75
+            )
+          )
+        );
 
   return {
     ...topic,
@@ -355,6 +556,7 @@ function calculateTopicScores(
     originalityScore
   };
 }
+
 
 function deduplicateTopics(
   topics
@@ -388,6 +590,7 @@ function deduplicateTopics(
 
   return result;
 }
+
 
 function rankTopics(
   topics
@@ -445,6 +648,7 @@ function rankTopics(
     );
 }
 
+
 function selectTopics(
   topics,
   requestedVideos
@@ -457,22 +661,109 @@ function selectTopics(
   /*
    * 5 is the normal daily target,
    * NOT a hard maximum.
-   *
-   * We therefore select up to the
-   * requested number of good topics.
    */
+
   return topics
     .filter(
-      (topic) =>
-        safeNumber(
-          topic.trendScore
-        ) >= MIN_TREND_SCORE
+      (topic) => {
+
+        /*
+         * Live topics require the
+         * normal minimum trend score.
+         */
+
+        if (
+          topic?.fallback !== true
+        ) {
+          return safeNumber(
+            topic?.trendScore
+          ) >= MIN_TREND_SCORE;
+        }
+
+        /*
+         * Fallback topics are allowed
+         * into the research pipeline.
+         *
+         * They are NOT automatically
+         * considered trending.
+         */
+
+        return true;
+      }
     )
     .slice(
       0,
       requested
     );
 }
+
+
+function addFallbackIfNeeded({
+  rankedTopics,
+  region,
+  requestedVideos
+}) {
+  const requested =
+    normalizeRequestedVideos(
+      requestedVideos
+    );
+
+  /*
+   * If enough live topics exist,
+   * do not use fallback topics.
+   */
+
+  if (
+    rankedTopics.length >= requested
+  ) {
+    return {
+      topics:
+        rankedTopics.slice(
+          0,
+          requested
+        ),
+
+      fallbackUsed:
+        false
+    };
+  }
+
+  const needed =
+    Math.max(
+      0,
+      requested -
+        rankedTopics.length
+    );
+
+  const fallbackTopics =
+    getFallbackTopics(
+      region,
+      needed
+    );
+
+  const combined =
+    [
+      ...rankedTopics,
+      ...fallbackTopics
+    ];
+
+  const unique =
+    deduplicateTopics(
+      combined
+    );
+
+  return {
+    topics:
+      unique.slice(
+        0,
+        requested
+      ),
+
+    fallbackUsed:
+      fallbackTopics.length > 0
+  };
+}
+
 
 export async function collectTrends(
   options = {}
@@ -490,20 +781,22 @@ export async function collectTrends(
   let regions;
 
   /*
-   * If orchestrator gives a specific
-   * region, use that region.
+   * Specific region.
    */
+
   if (
     region !== "ALL" &&
     REGION_MAP[region]
   ) {
     regions = [region];
+
   } else {
 
     /*
-     * Otherwise use config audience
-     * regions if available.
+     * Otherwise use configured
+     * audience regions.
      */
+
     const configured =
       Array.isArray(
         config?.audience?.regions
@@ -534,6 +827,7 @@ export async function collectTrends(
         : DEFAULT_REGIONS;
   }
 
+
   const allTopics =
     [];
 
@@ -541,9 +835,9 @@ export async function collectTrends(
     [];
 
   /*
-   * Collect Google Trends from
-   * every selected region.
+   * Collect live Google Trends.
    */
+
   for (const selectedRegion of regions) {
 
     const geos =
@@ -592,44 +886,185 @@ export async function collectTrends(
     }
   }
 
+
   /*
-   * Remove duplicate topics
-   * across countries/regions.
+   * Remove duplicates.
    */
+
   const uniqueTopics =
     deduplicateTopics(
       allTopics
     );
 
+
   /*
    * Calculate discovery scores.
    */
+
   const scoredTopics =
     uniqueTopics.map(
       calculateTopicScores
     );
 
+
   /*
-   * Rank strongest topics first.
+   * Rank live topics.
    */
-  const rankedTopics =
+
+  const rankedLiveTopics =
     rankTopics(
       scoredTopics
     );
 
+
   /*
-   * Select requested amount.
+   * Only use fallback when the
+   * live source does not provide
+   * enough usable topics.
+   *
+   * For ALL, fallback is applied
+   * per selected region only when
+   * that region has no live topics.
    */
-  const selectedTopics =
-    selectTopics(
-      rankedTopics,
+
+  let finalTopics =
+    [];
+
+  let fallbackUsed =
+    false;
+
+
+  if (region !== "ALL") {
+
+    const liveForRegion =
+      rankedLiveTopics.filter(
+        (topic) =>
+          normalizeRegion(
+            topic?.region
+          ) === region
+      );
+
+    const fallbackResult =
+      addFallbackIfNeeded({
+        rankedTopics:
+          liveForRegion,
+
+        region,
+
+        requestedVideos
+      });
+
+    finalTopics =
+      fallbackResult.topics;
+
+    fallbackUsed =
+      fallbackResult.fallbackUsed;
+
+  } else {
+
+    /*
+     * For worldwide mode, preserve
+     * live topics first.
+     */
+
+    finalTopics =
+      rankedLiveTopics.slice(
+        0,
+        requestedVideos
+      );
+
+    /*
+     * If worldwide live trends are
+     * insufficient, add safe global
+     * fallback topics.
+     */
+
+    if (
+      finalTopics.length <
       requestedVideos
-    );
+    ) {
+
+      const needed =
+        requestedVideos -
+        finalTopics.length;
+
+      const fallbackPool =
+        DEFAULT_REGIONS.flatMap(
+          (item) =>
+            getFallbackTopics(
+              item,
+              needed
+            )
+        );
+
+      const combined =
+        deduplicateTopics([
+          ...finalTopics,
+          ...fallbackPool
+        ]);
+
+      finalTopics =
+        combined.slice(
+          0,
+          requestedVideos
+        );
+
+      fallbackUsed =
+        finalTopics.some(
+          (topic) =>
+            topic?.fallback === true
+        );
+    }
+  }
+
+
+  const hasLiveTopics =
+    rankedLiveTopics.length > 0;
+
+  const hasSelectedTopics =
+    finalTopics.length > 0;
+
+
+  let sourceStatus;
+
+  if (hasLiveTopics) {
+
+    sourceStatus =
+      sourceErrors.length > 0
+        ? "PARTIAL"
+        : "LIVE";
+
+  } else if (hasSelectedTopics) {
+
+    sourceStatus =
+      "FALLBACK";
+
+  } else {
+
+    sourceStatus =
+      "FAILED";
+  }
+
+
+  /*
+   * NO_VALID_TRENDS should no longer
+   * automatically mean automation
+   * failure when safe fallback topics
+   * are available.
+   */
+
+  const status =
+    hasSelectedTopics
+      ? "TRENDS_AVAILABLE"
+      : "NO_VALID_TRENDS";
+
 
   return {
 
     success:
-      true,
+      hasSelectedTopics,
+
+    status,
 
     generatedAt:
       new Date().toISOString(),
@@ -656,27 +1091,25 @@ export async function collectTrends(
     regions,
 
     topicCount:
-      rankedTopics.length,
+      rankedLiveTopics.length,
 
     selectedTopicCount:
-      selectedTopics.length,
+      finalTopics.length,
 
     topics:
-      selectedTopics,
+      finalTopics,
 
     allTopics:
-      rankedTopics,
+      rankedLiveTopics,
 
-    sourceStatus:
-      sourceErrors.length === 0
-        ? "LIVE"
-        : rankedTopics.length > 0
-          ? "PARTIAL"
-          : "FAILED",
+    fallbackUsed,
+
+    sourceStatus,
 
     sourceErrors
   };
 }
+
 
 export async function getTrendRadar(
   options = {}
@@ -685,6 +1118,7 @@ export async function getTrendRadar(
     options
   );
 }
+
 
 export default {
   collectTrends,
