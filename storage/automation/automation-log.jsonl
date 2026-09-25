@@ -8,3 +8,6 @@
 {"runId":"scheduled-usa-1790287853340","status":"NO_VALID_TRENDS","region":"USA","loggedAt":"2026-09-24T22:10:53.892Z"}
 {"runId":"scheduled-middle_east-1790313005641","status":"AUTOMATION_STARTED","topic":null,"region":"MIDDLE_EAST","requestedVideos":1,"dryRun":false,"dailyTarget":5,"hardDailyMaximum":false,"loggedAt":"2026-09-25T05:10:05.646Z"}
 {"runId":"scheduled-middle_east-1790313005641","status":"NO_VALID_TRENDS","region":"MIDDLE_EAST","loggedAt":"2026-09-25T05:10:06.795Z"}
+{"runId":"scheduled-europe-1790320472203","status":"AUTOMATION_STARTED","topic":null,"region":"EUROPE","requestedVideos":1,"dryRun":false,"dailyTarget":5,"hardDailyMaximum":false,"canContinueBeyondTarget":true,"qualityOverQuantity":true,"loggedAt":"2026-09-25T07:14:32.210Z"}
+{"parentRunId":"scheduled-europe-1790320472203","runId":"scheduled-europe-1790320472203_1","status":"RESEARCH_REVIEW_REQUIRED","topic":"useful AI tools for everyday work","region":"EUROPE","index":1,"loggedAt":"2026-09-25T07:14:34.175Z"}
+{"runId":"scheduled-europe-1790320472203","status":"AUTOMATION_COMPLETED","region":"EUROPE","requestedVideos":1,"selectedTopics":1,"producedVideos":0,"readyVideos":0,"reviewVideos":1,"blockedVideos":0,"failedVideos":0,"dailyCount":0,"dailyTarget":5,"hardDailyMaximum":false,"canContinueBeyondTarget":true,"qualityOverQuantity":true,"loggedAt":"2026-09-25T07:14:34.178Z"}
