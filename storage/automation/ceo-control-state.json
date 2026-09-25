@@ -7,7 +7,7 @@
   "emergencyStopClearedAt": null,
   "daily": {
     "date": "2026-09-25",
-    "started": 10,
+    "started": 11,
     "completed": 0
   },
   "approvals": {},
@@ -101,7 +101,16 @@
       "runId": "scheduled-uk-1790356182154",
       "reservedAt": "2026-09-25T17:09:42.156Z",
       "status": "RESERVED"
+    },
+    "schedule:USA:2026-09-25-18": {
+      "reservationId": "reservation_1790374218362_kok920",
+      "key": "schedule:USA:2026-09-25-18",
+      "slot": 11,
+      "region": "USA",
+      "runId": "scheduled-usa-1790374218361",
+      "reservedAt": "2026-09-25T22:10:18.362Z",
+      "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-09-25T17:09:42.156Z"
+  "updatedAt": "2026-09-25T22:10:18.363Z"
 }
