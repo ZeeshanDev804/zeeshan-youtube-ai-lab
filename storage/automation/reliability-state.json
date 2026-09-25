@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-25T11:10:31.689Z",
+  "updatedAt": "2026-09-25T12:14:10.022Z",
   "jobs": {
     "scheduled-europe-1790266284648": {
       "runId": "scheduled-europe-1790266284648",
@@ -194,6 +194,30 @@
         "region": "EUROPE",
         "scheduleSlotId": "EUROPE-2026-09-25-13",
         "reservationKey": "schedule:EUROPE:2026-09-25-13",
+        "requestedVideos": 1,
+        "resultStatus": "AUTOMATION_COMPLETED",
+        "produced": 0,
+        "ready": 0,
+        "review": 0,
+        "blocked": 0,
+        "failed": 0
+      }
+    },
+    "scheduled-uk-1790338449390": {
+      "runId": "scheduled-uk-1790338449390",
+      "topic": "Scheduled automation - UK",
+      "status": "COMPLETED",
+      "currentStage": "COMPLETE",
+      "attempts": {},
+      "startedAt": "2026-09-25T12:14:09.394Z",
+      "updatedAt": "2026-09-25T12:14:10.021Z",
+      "completedAt": "2026-09-25T12:14:10.021Z",
+      "failedAt": null,
+      "lastError": null,
+      "metadata": {
+        "region": "UK",
+        "scheduleSlotId": "UK-2026-09-25-13",
+        "reservationKey": "schedule:UK:2026-09-25-13",
         "requestedVideos": 1,
         "resultStatus": "AUTOMATION_COMPLETED",
         "produced": 0,
