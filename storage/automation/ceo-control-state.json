@@ -7,7 +7,7 @@
   "emergencyStopClearedAt": null,
   "daily": {
     "date": "2026-09-25",
-    "started": 2,
+    "started": 3,
     "completed": 0
   },
   "approvals": {},
@@ -29,7 +29,16 @@
       "runId": "scheduled-europe-1790320472203",
       "reservedAt": "2026-09-25T07:14:32.205Z",
       "status": "RESERVED"
+    },
+    "schedule:UK:2026-09-25-09": {
+      "reservationId": "reservation_1790323876535_enzhik",
+      "key": "schedule:UK:2026-09-25-09",
+      "slot": 3,
+      "region": "UK",
+      "runId": "scheduled-uk-1790323876533",
+      "reservedAt": "2026-09-25T08:11:16.535Z",
+      "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-09-25T07:14:32.205Z"
+  "updatedAt": "2026-09-25T08:11:16.535Z"
 }
