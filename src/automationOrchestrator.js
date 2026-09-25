@@ -378,11 +378,6 @@ async function runStage(
 |--------------------------------------------------------------------------
 | TREND EXTRACTION
 |--------------------------------------------------------------------------
-|
-| TrendRadar versions may expose selected topics through different
-| property names. Accept all supported forms so fallback discovery
-| topics are not accidentally lost.
-|--------------------------------------------------------------------------
 */
 
 function extractTrendList(result) {
@@ -431,7 +426,8 @@ function normalizeTrend(
       rank: index + 1,
       category: "general",
       region,
-      source: "trend-radar"
+      source: "trend-radar",
+      fallback: false
     };
   }
 
@@ -479,6 +475,11 @@ function normalizeTrend(
       cleanText(
         trend?.source ||
         "trend-radar"
+      ),
+
+    fallback:
+      Boolean(
+        trend?.fallback
       )
   };
 }
@@ -546,23 +547,13 @@ function selectTrends(
       region
     );
 
-  /*
-   * Do not impose an artificial maximum on
-   * the whole daily system.
-   *
-   * This slice only limits this individual
-   * automation cycle to the requested amount.
-   */
-
   return normalized.slice(
     0,
     requested
   );
 }
 
-function getResearchResult(
-  result
-) {
+function getResearchResult(result) {
   if (
     result?.result
   ) {
@@ -572,9 +563,7 @@ function getResearchResult(
   return result || null;
 }
 
-function getResearchText(
-  research
-) {
+function getResearchText(research) {
   const claims =
     Array.isArray(
       research?.claims
@@ -629,9 +618,7 @@ function getResearchText(
   );
 }
 
-function getScriptText(
-  result
-) {
+function getScriptText(result) {
   if (
     typeof result === "string"
   ) {
@@ -654,8 +641,11 @@ function normalizeRisk(value) {
     ).toUpperCase();
 
   if (
-    ["LOW", "MEDIUM", "HIGH"]
-      .includes(risk)
+    [
+      "LOW",
+      "MEDIUM",
+      "HIGH"
+    ].includes(risk)
   ) {
     return risk;
   }
@@ -713,13 +703,15 @@ function calculateRiskLevel({
     ).toUpperCase();
 
   if (
-    copyrightStatus === "REVIEW"
+    copyrightStatus ===
+    "REVIEW"
   ) {
     risks.push("MEDIUM");
   }
 
   if (
-    copyrightStatus === "BLOCK"
+    copyrightStatus ===
+    "BLOCK"
   ) {
     risks.push("HIGH");
   }
@@ -912,9 +904,6 @@ async function createCEOReview({
 |--------------------------------------------------------------------------
 | PREVIEW MODE
 |--------------------------------------------------------------------------
-|
-| Preview must never generate final media.
-|--------------------------------------------------------------------------
 */
 
 async function previewSingleTrend({
@@ -1085,12 +1074,15 @@ async function processSingleTrend({
   ) {
     return {
       success: true,
-      status: "RESEARCH_REVIEW_REQUIRED",
+      status:
+        "RESEARCH_REVIEW_REQUIRED",
       runId,
       topic,
       region,
-      research: researchEnvelope,
-      researchResult: research,
+      research:
+        researchEnvelope,
+      researchResult:
+        research,
       nextStage:
         "RESEARCH_PROVIDER_OR_CEO_REVIEW"
     };
@@ -1101,11 +1093,13 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "RESEARCH_INSUFFICIENT",
+      status:
+        "RESEARCH_INSUFFICIENT",
       runId,
       topic,
       region,
-      research: researchEnvelope
+      research:
+        researchEnvelope
     };
   }
 
@@ -1119,8 +1113,10 @@ async function processSingleTrend({
           title: topic,
           language,
           region,
-          research: researchText,
-          researchResult: research
+          research:
+            researchText,
+          researchResult:
+            research
         })
     );
 
@@ -1129,11 +1125,13 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "SCRIPT_STAGE_FAILED",
+      status:
+        "SCRIPT_STAGE_FAILED",
       runId,
       topic,
       region,
-      script: scriptStage
+      script:
+        scriptStage
     };
   }
 
@@ -1150,7 +1148,8 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "SCRIPT_TOO_SHORT",
+      status:
+        "SCRIPT_TOO_SHORT",
       runId,
       topic,
       region,
@@ -1179,7 +1178,8 @@ async function processSingleTrend({
           title,
           script,
           description,
-          research: researchEnvelope
+          research:
+            researchEnvelope
         })
     );
 
@@ -1188,11 +1188,13 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "SAFETY_STAGE_FAILED",
+      status:
+        "SAFETY_STAGE_FAILED",
       runId,
       topic,
       region,
-      safety: safetyStage
+      safety:
+        safetyStage
     };
   }
 
@@ -1210,7 +1212,8 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "SAFETY_BLOCKED",
+      status:
+        "SAFETY_BLOCKED",
       runId,
       topic,
       region,
@@ -1250,11 +1253,13 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "COPYRIGHT_STAGE_FAILED",
+      status:
+        "COPYRIGHT_STAGE_FAILED",
       runId,
       topic,
       region,
-      copyright: copyrightStage
+      copyright:
+        copyrightStage
     };
   }
 
@@ -1267,11 +1272,13 @@ async function processSingleTrend({
     ).toUpperCase();
 
   if (
-    copyrightStatus === "BLOCK"
+    copyrightStatus ===
+    "BLOCK"
   ) {
     return {
       success: false,
-      status: "COPYRIGHT_BLOCKED",
+      status:
+        "COPYRIGHT_BLOCKED",
       runId,
       topic,
       region,
@@ -1280,7 +1287,8 @@ async function processSingleTrend({
   }
 
   if (
-    copyrightStatus !== "PASS"
+    copyrightStatus !==
+    "PASS"
   ) {
     return {
       success: true,
@@ -1314,11 +1322,13 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "DUPLICATE_STAGE_FAILED",
+      status:
+        "DUPLICATE_STAGE_FAILED",
       runId,
       topic,
       region,
-      duplicate: duplicateStage
+      duplicate:
+        duplicateStage
     };
   }
 
@@ -1332,11 +1342,36 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "DUPLICATE_BLOCKED",
+      status:
+        "DUPLICATE_BLOCKED",
       runId,
       topic,
       region,
       duplicate
+    };
+  }
+
+  /*
+   * Similarity REVIEW must also
+   * go to CEO review.
+   */
+
+  if (
+    String(
+      duplicate?.status || ""
+    ).toUpperCase() ===
+    "REVIEW"
+  ) {
+    return {
+      success: true,
+      status:
+        "DUPLICATE_REVIEW_REQUIRED",
+      runId,
+      topic,
+      region,
+      duplicate,
+      nextStage:
+        "CEO_APPROVAL"
     };
   }
 
@@ -1392,12 +1427,14 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "PRODUCTION_FAILED",
+      status:
+        "PRODUCTION_FAILED",
       runId,
       topic,
       region,
       riskLevel,
-      production: productionStage,
+      production:
+        productionStage,
       supportingContent
     };
   }
@@ -1432,7 +1469,8 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "FINAL_VIDEO_MISSING",
+      status:
+        "FINAL_VIDEO_MISSING",
       runId,
       topic,
       region,
@@ -1478,7 +1516,8 @@ async function processSingleTrend({
   ) {
     return {
       success: false,
-      status: "QA_BLOCKED",
+      status:
+        "QA_BLOCKED",
       runId,
       topic,
       region,
@@ -1508,25 +1547,47 @@ async function processSingleTrend({
       success: true,
       status:
         "CEO_REVIEW_REQUIRED",
+
       runId,
+
       topic,
+
       title,
+
       description,
+
       language,
+
       region,
+
       riskLevel,
-      requiresCEOApproval: true,
+
+      requiresCEOApproval:
+        true,
+
       manifest,
+
       production,
+
       finalVideoFile,
+
       qa,
+
       safety,
+
       copyright,
+
       duplicate,
+
       supportingContent,
+
       approval,
+
       dailyLimit:
-        getDailyLimitStatus(state),
+        getDailyLimitStatus(
+          state
+        ),
+
       nextStage:
         "YOUTUBE_UPLOAD_AFTER_CEO_APPROVAL"
     };
@@ -1543,25 +1604,47 @@ async function processSingleTrend({
 
   return {
     success: true,
-    status: "READY_FOR_YOUTUBE",
+
+    status:
+      "READY_FOR_YOUTUBE",
+
     runId,
+
     topic,
+
     title,
+
     description,
+
     language,
+
     region,
+
     riskLevel,
-    requiresCEOApproval: false,
+
+    requiresCEOApproval:
+      false,
+
     manifest,
+
     production,
+
     finalVideoFile,
+
     qa,
+
     supportingContent,
+
     learningReport,
+
     dailyLimit:
-      getDailyLimitStatus(state),
+      getDailyLimitStatus(
+        state
+      ),
+
     nextStage:
       "YOUTUBE_UPLOAD",
+
     createdAt:
       new Date().toISOString()
   };
@@ -1614,7 +1697,8 @@ export async function runAutomation({
     };
   }
 
-  let automationAllowed = false;
+  let automationAllowed =
+    false;
 
   try {
     automationAllowed =
@@ -1627,20 +1711,37 @@ export async function runAutomation({
     !automationAllowed
   ) {
     await appendLog({
-      runId: automationRunId,
-      status: "AUTOMATION_BLOCKED",
-      region: normalizedRegion
+      runId:
+        automationRunId,
+
+      status:
+        "AUTOMATION_BLOCKED",
+
+      region:
+        normalizedRegion
     });
 
     return {
       success: false,
-      status: "AUTOMATION_BLOCKED",
-      runId: automationRunId,
-      region: normalizedRegion,
-      requestedVideos: requestedCount,
+
+      status:
+        "AUTOMATION_BLOCKED",
+
+      runId:
+        automationRunId,
+
+      region:
+        normalizedRegion,
+
+      requestedVideos:
+        requestedCount,
+
       systemStatus,
+
       dailyLimit:
-        getDailyLimitStatus(state)
+        getDailyLimitStatus(
+          state
+        )
     };
   }
 
@@ -1650,39 +1751,82 @@ export async function runAutomation({
     );
 
   await appendLog({
-    runId: automationRunId,
-    status: "AUTOMATION_STARTED",
+    runId:
+      automationRunId,
+
+    status:
+      "AUTOMATION_STARTED",
+
     topic:
       explicitTopic || null,
-    region: normalizedRegion,
-    requestedVideos: requestedCount,
-    dryRun: Boolean(dryRun),
-    dailyTarget: DAILY_TARGET_VIDEOS,
-    hardDailyMaximum: false,
-    canContinueBeyondTarget: true
+
+    region:
+      normalizedRegion,
+
+    requestedVideos:
+      requestedCount,
+
+    dryRun:
+      Boolean(dryRun),
+
+    dailyTarget:
+      DAILY_TARGET_VIDEOS,
+
+    hardDailyMaximum:
+      false,
+
+    canContinueBeyondTarget:
+      true
   });
 
   let selectedTrends = [];
 
-  if (explicitTopic) {
+  /*
+   * IMPORTANT:
+   * trendStage is declared outside
+   * the conditional block so it is
+   * safely available for diagnostics.
+   */
+
+  let trendStage = null;
+
+  if (
+    explicitTopic
+  ) {
     selectedTrends = [
       {
-        topic: explicitTopic,
-        title: explicitTopic,
+        topic:
+          explicitTopic,
+
+        title:
+          explicitTopic,
+
         rank: 1,
-        source: "manual",
-        category: "general",
-        region: normalizedRegion
+
+        source:
+          "manual",
+
+        category:
+          "general",
+
+        region:
+          normalizedRegion,
+
+        fallback:
+          false
       }
     ];
   } else {
-    const trendStage =
+    trendStage =
       await runStage(
         "TREND_RADAR",
         async () =>
           collectTrends({
-            region: normalizedRegion,
-            requestedVideos: requestedCount
+            region:
+              normalizedRegion,
+
+            requestedVideos:
+              requestedCount
           })
       );
 
@@ -1690,26 +1834,39 @@ export async function runAutomation({
       !trendStage.success
     ) {
       await appendLog({
-        runId: automationRunId,
-        status: "TREND_STAGE_FAILED",
-        error: trendStage.error
+        runId:
+          automationRunId,
+
+        status:
+          "TREND_STAGE_FAILED",
+
+        error:
+          trendStage.error
       });
 
       return {
         success: false,
-        status: "TREND_STAGE_FAILED",
-        runId: automationRunId,
-        region: normalizedRegion,
-        requestedVideos: requestedCount,
-        error: trendStage.error
+
+        status:
+          "TREND_STAGE_FAILED",
+
+        runId:
+          automationRunId,
+
+        region:
+          normalizedRegion,
+
+        requestedVideos:
+          requestedCount,
+
+        error:
+          trendStage.error
       };
     }
 
     /*
-     * IMPORTANT:
-     *
-     * Accept the actual selected/fallback list
-     * returned by TrendRadar.
+     * Accept the actual TrendRadar
+     * selected/fallback topic list.
      */
 
     selectedTrends =
@@ -1726,44 +1883,82 @@ export async function runAutomation({
     const trendRadarStatus =
       String(
         trendStage?.result?.status ||
-        ""
+        "NO_VALID_TRENDS"
       ).toUpperCase();
 
     const sourceStatus =
       String(
         trendStage?.result?.sourceStatus ||
-        ""
+        "UNKNOWN"
       ).toUpperCase();
 
     await appendLog({
-      runId: automationRunId,
-      status: "NO_VALID_TRENDS",
-      region: normalizedRegion,
+      runId:
+        automationRunId,
+
+      status:
+        "NO_VALID_TRENDS",
+
+      region:
+        normalizedRegion,
+
       trendRadarStatus,
-      sourceStatus
+
+      sourceStatus,
+
+      trendRadarTopicCount:
+        Number(
+          trendStage?.result
+            ?.topicCount || 0
+        ),
+
+      trendRadarSelectedTopicCount:
+        Number(
+          trendStage?.result
+            ?.selectedTopicCount || 0
+        )
     });
 
     return {
       success: false,
-      status: "NO_VALID_TRENDS",
-      runId: automationRunId,
-      region: normalizedRegion,
-      requestedVideos: requestedCount,
+
+      status:
+        "NO_VALID_TRENDS",
+
+      runId:
+        automationRunId,
+
+      region:
+        normalizedRegion,
+
+      requestedVideos:
+        requestedCount,
+
       trends: [],
+
       trendRadarStatus,
+
       sourceStatus
     };
   }
 
   /*
-   * Preview mode:
+   * PREVIEW MODE
    *
-   * Discover topics only.
-   * No research generation, TTS, visuals,
-   * FFmpeg rendering, QA or YouTube upload.
+   * Discovery only.
+   *
+   * No research.
+   * No script generation.
+   * No TTS.
+   * No visuals.
+   * No FFmpeg.
+   * No QA.
+   * No YouTube upload.
    */
 
-  if (dryRun) {
+  if (
+    dryRun
+  ) {
     const previewResults = [];
 
     for (
@@ -1780,27 +1975,49 @@ export async function runAutomation({
       const result =
         await processSingleTrend({
           trend,
-          runId: itemRunId,
+
+          runId:
+            itemRunId,
+
           language,
+
           voiceId,
+
           dryRun: true,
-          region: normalizedRegion,
+
+          region:
+            normalizedRegion,
+
           state
         });
 
-      previewResults.push(result);
+      previewResults.push(
+        result
+      );
 
       await appendLog({
-        parentRunId: automationRunId,
-        runId: itemRunId,
-        status: result.status,
+        parentRunId:
+          automationRunId,
+
+        runId:
+          itemRunId,
+
+        status:
+          result.status,
+
         topic:
           result.topic ||
           trend.topic ||
           null,
-        region: normalizedRegion,
-        index: index + 1,
-        dryRun: true
+
+        region:
+          normalizedRegion,
+
+        index:
+          index + 1,
+
+        dryRun:
+          true
       });
     }
 
@@ -1819,21 +2036,36 @@ export async function runAutomation({
       ).length;
 
     await appendLog({
-      runId: automationRunId,
-      status: "DRY_RUN_COMPLETED",
-      region: normalizedRegion,
-      requestedVideos: requestedCount,
+      runId:
+        automationRunId,
+
+      status:
+        "DRY_RUN_COMPLETED",
+
+      region:
+        normalizedRegion,
+
+      requestedVideos:
+        requestedCount,
+
       selectedTopics:
         selectedTrends.length,
+
       previewTopics:
         previewReadyCount,
+
       reviewTopics:
         previewReviewCount,
-      producedVideos: 0,
+
+      producedVideos:
+        0,
+
       dailyCount:
         state.dailyCount,
+
       dailyTarget:
         DAILY_TARGET_VIDEOS,
+
       hardDailyMaximum:
         false
     });
@@ -1908,34 +2140,52 @@ export async function runAutomation({
     const result =
       await processSingleTrend({
         trend,
-        runId: itemRunId,
+
+        runId:
+          itemRunId,
+
         language,
+
         voiceId,
+
         dryRun: false,
-        region: normalizedRegion,
+
+        region:
+          normalizedRegion,
+
         state
       });
 
-    results.push(result);
+    results.push(
+      result
+    );
 
     await appendLog({
-      parentRunId: automationRunId,
-      runId: itemRunId,
-      status: result.status,
+      parentRunId:
+        automationRunId,
+
+      runId:
+        itemRunId,
+
+      status:
+        result.status,
+
       topic:
         result.topic ||
         trend.topic ||
         null,
-      region: normalizedRegion,
-      index: index + 1
+
+      region:
+        normalizedRegion,
+
+      index:
+        index + 1
     });
   }
 
   /*
-   * Only real production results count.
-   *
-   * DRY_RUN_READY can never increase the
-   * production daily counter.
+   * Only real production results
+   * count toward the daily counter.
    */
 
   const producedCount =
@@ -1962,7 +2212,9 @@ export async function runAutomation({
         item.status ===
           "RESEARCH_REVIEW_REQUIRED" ||
         item.status ===
-          "COPYRIGHT_REVIEW_REQUIRED"
+          "COPYRIGHT_REVIEW_REQUIRED" ||
+        item.status ===
+          "DUPLICATE_REVIEW_REQUIRED"
     ).length;
 
   const blockedCount =
@@ -2020,36 +2272,54 @@ export async function runAutomation({
     );
 
   const status =
+    results.length > 0 &&
     failedCount ===
       results.length
       ? "AUTOMATION_FAILED"
       : "AUTOMATION_COMPLETED";
 
   await appendLog({
-    runId: automationRunId,
+    runId:
+      automationRunId,
+
     status,
-    region: normalizedRegion,
-    requestedVideos: requestedCount,
+
+    region:
+      normalizedRegion,
+
+    requestedVideos:
+      requestedCount,
+
     selectedTopics:
       selectedTrends.length,
+
     producedVideos:
       producedCount,
+
     readyVideos:
       readyCount,
+
     reviewVideos:
       reviewCount,
+
     blockedVideos:
       blockedCount,
+
     failedVideos:
       failedCount,
+
     dailyCount:
       state.dailyCount,
+
     dailyTarget:
       DAILY_TARGET_VIDEOS,
+
     hardDailyMaximum:
       false,
+
     canContinueBeyondTarget:
       true,
+
     qualityOverQuantity:
       true
   });
@@ -2125,7 +2395,8 @@ export async function previewAutomation(
   return runAutomation({
     ...options,
 
-    dryRun: true
+    dryRun:
+      true
   });
 }
 
@@ -2142,14 +2413,17 @@ export async function getAutomationStatus() {
       getSystemStatus();
   } catch (error) {
     systemStatus = {
-      status: "UNKNOWN",
+      status:
+        "UNKNOWN",
+
       error:
         error?.message ||
         String(error)
     };
   }
 
-  let automationAllowed = false;
+  let automationAllowed =
+    false;
 
   try {
     automationAllowed =
@@ -2228,4 +2502,67 @@ export async function getAutomationLog({
     const entries = [];
 
     for (
-      const
+      let index =
+        Math.max(
+          0,
+          lines.length -
+            safeLimit
+        );
+
+      index < lines.length;
+
+      index += 1
+    ) {
+      try {
+        const parsed =
+          JSON.parse(
+            lines[index]
+          );
+
+        entries.push(
+          parsed
+        );
+      } catch {
+        // Ignore malformed log lines.
+      }
+    }
+
+    return {
+      success: true,
+
+      status:
+        "AUTOMATION_LOG_READY",
+
+      count:
+        entries.length,
+
+      entries
+    };
+  } catch (error) {
+    return {
+      success: true,
+
+      status:
+        "AUTOMATION_LOG_EMPTY",
+
+      count: 0,
+
+      entries: [],
+
+      error:
+        error?.code ===
+        "ENOENT"
+          ? null
+          : error?.message ||
+            String(error)
+    };
+  }
+}
+
+export default {
+  runAutomation,
+  runAutomationCycle,
+  previewAutomation,
+  getAutomationStatus,
+  getAutomationLog
+};
