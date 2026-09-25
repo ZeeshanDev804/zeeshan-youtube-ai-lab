@@ -374,6 +374,17 @@ async function runStage(
   };
 }
 
+/*
+|--------------------------------------------------------------------------
+| TREND EXTRACTION
+|--------------------------------------------------------------------------
+|
+| TrendRadar versions may expose selected topics through different
+| property names. Accept all supported forms so fallback discovery
+| topics are not accidentally lost.
+|--------------------------------------------------------------------------
+*/
+
 function extractTrendList(result) {
   if (
     Array.isArray(result)
@@ -381,28 +392,23 @@ function extractTrendList(result) {
     return result;
   }
 
-  if (
-    Array.isArray(result?.topics)
-  ) {
-    return result.topics;
-  }
+  const possibleLists = [
+    result?.selectedTopics,
+    result?.topics,
+    result?.selected,
+    result?.trends,
+    result?.items,
+    result?.results
+  ];
 
-  if (
-    Array.isArray(result?.trends)
+  for (
+    const list of possibleLists
   ) {
-    return result.trends;
-  }
-
-  if (
-    Array.isArray(result?.items)
-  ) {
-    return result.items;
-  }
-
-  if (
-    Array.isArray(result?.results)
-  ) {
-    return result.results;
+    if (
+      Array.isArray(list)
+    ) {
+      return list;
+    }
   }
 
   return [];
@@ -424,7 +430,8 @@ function normalizeTrend(
       title: topic,
       rank: index + 1,
       category: "general",
-      region
+      region,
+      source: "trend-radar"
     };
   }
 
@@ -466,6 +473,12 @@ function normalizeTrend(
       cleanText(
         trend?.region ||
         region
+      ),
+
+    source:
+      cleanText(
+        trend?.source ||
+        "trend-radar"
       )
   };
 }
@@ -527,10 +540,21 @@ function selectTrends(
       requestedVideos
     );
 
-  return normalizeTrends(
-    result,
-    region
-  ).slice(
+  const normalized =
+    normalizeTrends(
+      result,
+      region
+    );
+
+  /*
+   * Do not impose an artificial maximum on
+   * the whole daily system.
+   *
+   * This slice only limits this individual
+   * automation cycle to the requested amount.
+   */
+
+  return normalized.slice(
     0,
     requested
   );
@@ -884,6 +908,94 @@ async function createCEOReview({
   }
 }
 
+/*
+|--------------------------------------------------------------------------
+| PREVIEW MODE
+|--------------------------------------------------------------------------
+|
+| Preview must never generate final media.
+|--------------------------------------------------------------------------
+*/
+
+async function previewSingleTrend({
+  trend,
+  runId,
+  language,
+  region,
+  state
+}) {
+  const topic =
+    cleanText(
+      trend?.topic
+    );
+
+  if (!topic) {
+    return {
+      success: false,
+      status: "INVALID_TOPIC",
+      runId,
+      region
+    };
+  }
+
+  return {
+    success: true,
+
+    status:
+      "DRY_RUN_READY",
+
+    runId,
+
+    topic,
+
+    title:
+      cleanText(
+        trend?.title ||
+        topic
+      ),
+
+    language,
+
+    region,
+
+    source:
+      trend?.source ||
+      "trend-radar",
+
+    fallback:
+      Boolean(
+        trend?.fallback
+      ),
+
+    fallbackReason:
+      trend?.fallbackReason ||
+      null,
+
+    dailyLimit:
+      getDailyLimitStatus(
+        state
+      ),
+
+    nextStage:
+      "PREVIEW_ONLY",
+
+    productionStarted:
+      false,
+
+    youtubeUploadStarted:
+      false,
+
+    createdAt:
+      new Date().toISOString()
+  };
+}
+
+/*
+|--------------------------------------------------------------------------
+| PROCESS ONE REAL TREND
+|--------------------------------------------------------------------------
+*/
+
 async function processSingleTrend({
   trend,
   runId,
@@ -905,6 +1017,20 @@ async function processSingleTrend({
       runId,
       region
     };
+  }
+
+  /*
+   * Absolute dry-run protection.
+   */
+
+  if (dryRun) {
+    return previewSingleTrend({
+      trend,
+      runId,
+      language,
+      region,
+      state
+    });
   }
 
   const researchStage =
@@ -1406,30 +1532,6 @@ async function processSingleTrend({
     };
   }
 
-  if (dryRun) {
-    return {
-      success: true,
-      status: "DRY_RUN_READY",
-      runId,
-      topic,
-      title,
-      description,
-      language,
-      region,
-      riskLevel,
-      requiresCEOApproval: false,
-      manifest,
-      production,
-      finalVideoFile,
-      qa,
-      supportingContent,
-      dailyLimit:
-        getDailyLimitStatus(state),
-      nextStage:
-        "YOUTUBE_UPLOAD"
-    };
-  }
-
   let learningReport = null;
 
   try {
@@ -1556,7 +1658,8 @@ export async function runAutomation({
     requestedVideos: requestedCount,
     dryRun: Boolean(dryRun),
     dailyTarget: DAILY_TARGET_VIDEOS,
-    hardDailyMaximum: false
+    hardDailyMaximum: false,
+    canContinueBeyondTarget: true
   });
 
   let selectedTrends = [];
@@ -1602,6 +1705,13 @@ export async function runAutomation({
       };
     }
 
+    /*
+     * IMPORTANT:
+     *
+     * Accept the actual selected/fallback list
+     * returned by TrendRadar.
+     */
+
     selectedTrends =
       selectTrends(
         trendStage.result,
@@ -1613,10 +1723,24 @@ export async function runAutomation({
   if (
     selectedTrends.length === 0
   ) {
+    const trendRadarStatus =
+      String(
+        trendStage?.result?.status ||
+        ""
+      ).toUpperCase();
+
+    const sourceStatus =
+      String(
+        trendStage?.result?.sourceStatus ||
+        ""
+      ).toUpperCase();
+
     await appendLog({
       runId: automationRunId,
       status: "NO_VALID_TRENDS",
-      region: normalizedRegion
+      region: normalizedRegion,
+      trendRadarStatus,
+      sourceStatus
     });
 
     return {
@@ -1625,7 +1749,146 @@ export async function runAutomation({
       runId: automationRunId,
       region: normalizedRegion,
       requestedVideos: requestedCount,
-      trends: []
+      trends: [],
+      trendRadarStatus,
+      sourceStatus
+    };
+  }
+
+  /*
+   * Preview mode:
+   *
+   * Discover topics only.
+   * No research generation, TTS, visuals,
+   * FFmpeg rendering, QA or YouTube upload.
+   */
+
+  if (dryRun) {
+    const previewResults = [];
+
+    for (
+      let index = 0;
+      index < selectedTrends.length;
+      index += 1
+    ) {
+      const trend =
+        selectedTrends[index];
+
+      const itemRunId =
+        `${automationRunId}_${index + 1}`;
+
+      const result =
+        await processSingleTrend({
+          trend,
+          runId: itemRunId,
+          language,
+          voiceId,
+          dryRun: true,
+          region: normalizedRegion,
+          state
+        });
+
+      previewResults.push(result);
+
+      await appendLog({
+        parentRunId: automationRunId,
+        runId: itemRunId,
+        status: result.status,
+        topic:
+          result.topic ||
+          trend.topic ||
+          null,
+        region: normalizedRegion,
+        index: index + 1,
+        dryRun: true
+      });
+    }
+
+    const previewReadyCount =
+      previewResults.filter(
+        (item) =>
+          item.status ===
+          "DRY_RUN_READY"
+      ).length;
+
+    const previewReviewCount =
+      previewResults.filter(
+        (item) =>
+          item.status !==
+          "DRY_RUN_READY"
+      ).length;
+
+    await appendLog({
+      runId: automationRunId,
+      status: "DRY_RUN_COMPLETED",
+      region: normalizedRegion,
+      requestedVideos: requestedCount,
+      selectedTopics:
+        selectedTrends.length,
+      previewTopics:
+        previewReadyCount,
+      reviewTopics:
+        previewReviewCount,
+      producedVideos: 0,
+      dailyCount:
+        state.dailyCount,
+      dailyTarget:
+        DAILY_TARGET_VIDEOS,
+      hardDailyMaximum:
+        false
+    });
+
+    return {
+      success: true,
+
+      status:
+        "DRY_RUN_COMPLETED",
+
+      runId:
+        automationRunId,
+
+      region:
+        normalizedRegion,
+
+      requestedVideos:
+        requestedCount,
+
+      selectedTopics:
+        selectedTrends.length,
+
+      producedVideos:
+        0,
+
+      readyVideos:
+        0,
+
+      reviewVideos:
+        previewReviewCount,
+
+      blockedVideos:
+        0,
+
+      failedVideos:
+        previewResults.filter(
+          (item) =>
+            item.success === false
+        ).length,
+
+      trends:
+        selectedTrends,
+
+      results:
+        previewResults,
+
+      dailyLimit:
+        getDailyLimitStatus(
+          state
+        ),
+
+      systemStatus,
+
+      createdAt:
+        new Date().toISOString()
     };
   }
 
@@ -1648,7 +1911,7 @@ export async function runAutomation({
         runId: itemRunId,
         language,
         voiceId,
-        dryRun,
+        dryRun: false,
         region: normalizedRegion,
         state
       });
@@ -1668,15 +1931,20 @@ export async function runAutomation({
     });
   }
 
+  /*
+   * Only real production results count.
+   *
+   * DRY_RUN_READY can never increase the
+   * production daily counter.
+   */
+
   const producedCount =
     results.filter(
       (item) =>
         item.status ===
           "READY_FOR_YOUTUBE" ||
         item.status ===
-          "CEO_REVIEW_REQUIRED" ||
-        item.status ===
-          "DRY_RUN_READY"
+          "CEO_REVIEW_REQUIRED"
     ).length;
 
   const readyCount =
@@ -1714,14 +1982,14 @@ export async function runAutomation({
         item.success === false
     ).length;
 
+  /*
+   * 5 is a target, NOT a hard maximum.
+   */
+
   const newDailyCount =
-    dryRun
-      ? Number(
-          state.dailyCount || 0
-        )
-      : Number(
-          state.dailyCount || 0
-        ) + producedCount;
+    Number(
+      state.dailyCount || 0
+    ) + producedCount;
 
   state =
     await writeState({
@@ -1779,7 +2047,11 @@ export async function runAutomation({
     dailyTarget:
       DAILY_TARGET_VIDEOS,
     hardDailyMaximum:
-      false
+      false,
+    canContinueBeyondTarget:
+      true,
+    qualityOverQuantity:
+      true
   });
 
   return {
@@ -1821,6 +2093,18 @@ export async function runAutomation({
     dailyLimit,
 
     systemStatus,
+
+    targetIsHardMaximum:
+      false,
+
+    maxDailyVideos:
+      null,
+
+    canContinueBeyondTarget:
+      true,
+
+    qualityOverQuantity:
+      true,
 
     createdAt:
       new Date().toISOString()
@@ -1944,64 +2228,4 @@ export async function getAutomationLog({
     const entries = [];
 
     for (
-      const line of lines
-    ) {
-      try {
-        entries.push(
-          JSON.parse(line)
-        );
-      } catch {
-        // Ignore invalid log lines.
-      }
-    }
-
-    return entries.slice(
-      -safeLimit
-    );
-  } catch {
-    return [];
-  }
-}
-
-export async function resetAutomationDailyCounter() {
-  const state =
-    resetDailyStateIfNeeded(
-      await readState()
-    );
-
-  const nextState =
-    await writeState({
-      ...state,
-
-      dailyCount: 0,
-
-      lastStatus:
-        "DAILY_COUNTER_RESET"
-    });
-
-  await appendLog({
-    status:
-      "DAILY_COUNTER_RESET"
-  });
-
-  return {
-    success: true,
-
-    status:
-      "DAILY_COUNTER_RESET",
-
-    dailyLimit:
-      getDailyLimitStatus(
-        nextState
-      ),
-
-    state:
-      nextState
-  };
-}
-
-export {
-  DAILY_TARGET_VIDEOS,
-  MAX_STAGE_RETRIES,
-  DEFAULT_REGION
-};
+      const
