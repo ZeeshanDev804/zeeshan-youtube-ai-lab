@@ -7,7 +7,7 @@
   "emergencyStopClearedAt": null,
   "daily": {
     "date": "2026-09-26",
-    "started": 1,
+    "started": 2,
     "completed": 0
   },
   "approvals": {},
@@ -20,7 +20,16 @@
       "runId": "scheduled-middle_east-1790399407626",
       "reservedAt": "2026-09-26T05:10:07.628Z",
       "status": "RESERVED"
+    },
+    "schedule:EUROPE:2026-09-26-09": {
+      "reservationId": "reservation_1790406617239_cry1p7",
+      "key": "schedule:EUROPE:2026-09-26-09",
+      "slot": 2,
+      "region": "EUROPE",
+      "runId": "scheduled-europe-1790406617237",
+      "reservedAt": "2026-09-26T07:10:17.239Z",
+      "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-09-26T05:10:07.628Z"
+  "updatedAt": "2026-09-26T07:10:17.239Z"
 }
