@@ -7,7 +7,7 @@
   "emergencyStopClearedAt": null,
   "daily": {
     "date": "2026-09-26",
-    "started": 3,
+    "started": 4,
     "completed": 0
   },
   "approvals": {},
@@ -38,7 +38,16 @@
       "runId": "scheduled-uk-1790410304451",
       "reservedAt": "2026-09-26T08:11:44.452Z",
       "status": "RESERVED"
+    },
+    "schedule:MIDDLE_EAST:2026-09-26-13": {
+      "reservationId": "reservation_1790413846279_2v6p3i",
+      "key": "schedule:MIDDLE_EAST:2026-09-26-13",
+      "slot": 4,
+      "region": "MIDDLE_EAST",
+      "runId": "scheduled-middle_east-1790413846278",
+      "reservedAt": "2026-09-26T09:10:46.279Z",
+      "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-09-26T08:11:44.452Z"
+  "updatedAt": "2026-09-26T09:10:46.279Z"
 }
