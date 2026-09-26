@@ -7,7 +7,7 @@
   "emergencyStopClearedAt": null,
   "daily": {
     "date": "2026-09-26",
-    "started": 5,
+    "started": 6,
     "completed": 0
   },
   "approvals": {},
@@ -56,7 +56,16 @@
       "runId": "scheduled-europe-1790420986981",
       "reservedAt": "2026-09-26T11:09:46.983Z",
       "status": "RESERVED"
+    },
+    "schedule:UK:2026-09-26-13": {
+      "reservationId": "reservation_1790424760725_rsf7kp",
+      "key": "schedule:UK:2026-09-26-13",
+      "slot": 6,
+      "region": "UK",
+      "runId": "scheduled-uk-1790424760723",
+      "reservedAt": "2026-09-26T12:12:40.725Z",
+      "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-09-26T11:09:46.983Z"
+  "updatedAt": "2026-09-26T12:12:40.725Z"
 }
