@@ -6,111 +6,21 @@
   "emergencyStopAt": null,
   "emergencyStopClearedAt": null,
   "daily": {
-    "date": "2026-09-25",
-    "started": 11,
+    "date": "2026-09-26",
+    "started": 1,
     "completed": 0
   },
   "approvals": {},
   "reservations": {
-    "schedule:MIDDLE_EAST:2026-09-25-09": {
-      "reservationId": "reservation_1790313005642_1ugro9",
-      "key": "schedule:MIDDLE_EAST:2026-09-25-09",
+    "schedule:MIDDLE_EAST:2026-09-26-09": {
+      "reservationId": "reservation_1790399407628_fas5ck",
+      "key": "schedule:MIDDLE_EAST:2026-09-26-09",
       "slot": 1,
       "region": "MIDDLE_EAST",
-      "runId": "scheduled-middle_east-1790313005641",
-      "reservedAt": "2026-09-25T05:10:05.642Z",
-      "status": "RESERVED"
-    },
-    "schedule:EUROPE:2026-09-25-09": {
-      "reservationId": "reservation_1790320472205_dr3oo4",
-      "key": "schedule:EUROPE:2026-09-25-09",
-      "slot": 2,
-      "region": "EUROPE",
-      "runId": "scheduled-europe-1790320472203",
-      "reservedAt": "2026-09-25T07:14:32.205Z",
-      "status": "RESERVED"
-    },
-    "schedule:UK:2026-09-25-09": {
-      "reservationId": "reservation_1790323876535_enzhik",
-      "key": "schedule:UK:2026-09-25-09",
-      "slot": 3,
-      "region": "UK",
-      "runId": "scheduled-uk-1790323876533",
-      "reservedAt": "2026-09-25T08:11:16.535Z",
-      "status": "RESERVED"
-    },
-    "schedule:MIDDLE_EAST:2026-09-25-13": {
-      "reservationId": "reservation_1790327470210_ib1ox4",
-      "key": "schedule:MIDDLE_EAST:2026-09-25-13",
-      "slot": 4,
-      "region": "MIDDLE_EAST",
-      "runId": "scheduled-middle_east-1790327470208",
-      "reservedAt": "2026-09-25T09:11:10.210Z",
-      "status": "RESERVED"
-    },
-    "schedule:EUROPE:2026-09-25-13": {
-      "reservationId": "reservation_1790334629485_inmdrt",
-      "key": "schedule:EUROPE:2026-09-25-13",
-      "slot": 5,
-      "region": "EUROPE",
-      "runId": "scheduled-europe-1790334629483",
-      "reservedAt": "2026-09-25T11:10:29.485Z",
-      "status": "RESERVED"
-    },
-    "schedule:UK:2026-09-25-13": {
-      "reservationId": "reservation_1790338449391_ivqpzb",
-      "key": "schedule:UK:2026-09-25-13",
-      "slot": 6,
-      "region": "UK",
-      "runId": "scheduled-uk-1790338449390",
-      "reservedAt": "2026-09-25T12:14:09.391Z",
-      "status": "RESERVED"
-    },
-    "schedule:MIDDLE_EAST:2026-09-25-18": {
-      "reservationId": "reservation_1790345498232_jbvjov",
-      "key": "schedule:MIDDLE_EAST:2026-09-25-18",
-      "slot": 7,
-      "region": "MIDDLE_EAST",
-      "runId": "scheduled-middle_east-1790345498230",
-      "reservedAt": "2026-09-25T14:11:38.232Z",
-      "status": "RESERVED"
-    },
-    "schedule:EUROPE:2026-09-25-18": {
-      "reservationId": "reservation_1790352815656_5yy5sf",
-      "key": "schedule:EUROPE:2026-09-25-18",
-      "slot": 8,
-      "region": "EUROPE",
-      "runId": "scheduled-europe-1790352815655",
-      "reservedAt": "2026-09-25T16:13:35.656Z",
-      "status": "RESERVED"
-    },
-    "schedule:USA:2026-09-25-13": {
-      "reservationId": "reservation_1790356181656_d25a8c",
-      "key": "schedule:USA:2026-09-25-13",
-      "slot": 9,
-      "region": "USA",
-      "runId": "scheduled-usa-1790356181654",
-      "reservedAt": "2026-09-25T17:09:41.656Z",
-      "status": "RESERVED"
-    },
-    "schedule:UK:2026-09-25-18": {
-      "reservationId": "reservation_1790356182156_k9dj9b",
-      "key": "schedule:UK:2026-09-25-18",
-      "slot": 10,
-      "region": "UK",
-      "runId": "scheduled-uk-1790356182154",
-      "reservedAt": "2026-09-25T17:09:42.156Z",
-      "status": "RESERVED"
-    },
-    "schedule:USA:2026-09-25-18": {
-      "reservationId": "reservation_1790374218362_kok920",
-      "key": "schedule:USA:2026-09-25-18",
-      "slot": 11,
-      "region": "USA",
-      "runId": "scheduled-usa-1790374218361",
-      "reservedAt": "2026-09-25T22:10:18.362Z",
+      "runId": "scheduled-middle_east-1790399407626",
+      "reservedAt": "2026-09-26T05:10:07.628Z",
       "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-09-25T22:10:18.363Z"
+  "updatedAt": "2026-09-26T05:10:07.628Z"
 }
