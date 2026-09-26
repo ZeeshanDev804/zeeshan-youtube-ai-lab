@@ -7,7 +7,7 @@
   "emergencyStopClearedAt": null,
   "daily": {
     "date": "2026-09-26",
-    "started": 9,
+    "started": 11,
     "completed": 0
   },
   "approvals": {},
@@ -92,7 +92,25 @@
       "runId": "scheduled-europe-1790439045508",
       "reservedAt": "2026-09-26T16:10:45.510Z",
       "status": "RESERVED"
+    },
+    "schedule:USA:2026-09-26-13": {
+      "reservationId": "reservation_1790442589297_7r1ge5",
+      "key": "schedule:USA:2026-09-26-13",
+      "slot": 10,
+      "region": "USA",
+      "runId": "scheduled-usa-1790442589295",
+      "reservedAt": "2026-09-26T17:09:49.297Z",
+      "status": "RESERVED"
+    },
+    "schedule:UK:2026-09-26-18": {
+      "reservationId": "reservation_1790442589888_p1lvx1",
+      "key": "schedule:UK:2026-09-26-18",
+      "slot": 11,
+      "region": "UK",
+      "runId": "scheduled-uk-1790442589885",
+      "reservedAt": "2026-09-26T17:09:49.888Z",
+      "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-09-26T16:10:45.510Z"
+  "updatedAt": "2026-09-26T17:09:49.888Z"
 }
