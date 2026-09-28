@@ -7,7 +7,7 @@
   "emergencyStopClearedAt": null,
   "daily": {
     "date": "2026-09-28",
-    "started": 5,
+    "started": 6,
     "completed": 0
   },
   "approvals": {},
@@ -56,7 +56,16 @@
       "runId": "scheduled-middle_east-1790604015777",
       "reservedAt": "2026-09-28T14:00:15.779Z",
       "status": "RESERVED"
+    },
+    "schedule:USA:2026-09-28-18": {
+      "reservationId": "reservation_1790633465333_b9xd55",
+      "key": "schedule:USA:2026-09-28-18",
+      "slot": 6,
+      "region": "USA",
+      "runId": "scheduled-usa-1790633465330",
+      "reservedAt": "2026-09-28T22:11:05.333Z",
+      "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-09-28T14:00:15.779Z"
+  "updatedAt": "2026-09-28T22:11:05.333Z"
 }
