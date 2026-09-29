@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-29T05:13:50.117Z",
+  "updatedAt": "2026-09-29T13:13:49.287Z",
   "jobs": {
     "scheduled-europe-1790266284648": {
       "runId": "scheduled-europe-1790266284648",
@@ -1082,6 +1082,30 @@
         "region": "MIDDLE_EAST",
         "scheduleSlotId": "MIDDLE_EAST-2026-09-29-09",
         "reservationKey": "schedule:MIDDLE_EAST:2026-09-29-09",
+        "requestedVideos": 1,
+        "resultStatus": "AUTOMATION_COMPLETED",
+        "produced": 0,
+        "ready": 0,
+        "review": 0,
+        "blocked": 0,
+        "failed": 0
+      }
+    },
+    "scheduled-usa-1790687628658": {
+      "runId": "scheduled-usa-1790687628658",
+      "topic": "Scheduled automation - USA",
+      "status": "COMPLETED",
+      "currentStage": "COMPLETE",
+      "attempts": {},
+      "startedAt": "2026-09-29T13:13:48.662Z",
+      "updatedAt": "2026-09-29T13:13:49.287Z",
+      "completedAt": "2026-09-29T13:13:49.287Z",
+      "failedAt": null,
+      "lastError": null,
+      "metadata": {
+        "region": "USA",
+        "scheduleSlotId": "USA-2026-09-29-09",
+        "reservationKey": "schedule:USA:2026-09-29-09",
         "requestedVideos": 1,
         "resultStatus": "AUTOMATION_COMPLETED",
         "produced": 0,
