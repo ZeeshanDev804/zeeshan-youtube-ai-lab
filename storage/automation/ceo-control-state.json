@@ -6,66 +6,21 @@
   "emergencyStopAt": null,
   "emergencyStopClearedAt": null,
   "daily": {
-    "date": "2026-09-28",
-    "started": 6,
+    "date": "2026-09-29",
+    "started": 1,
     "completed": 0
   },
   "approvals": {},
   "reservations": {
-    "schedule:MIDDLE_EAST:2026-09-28-09": {
-      "reservationId": "reservation_1790572315044_n014f9",
-      "key": "schedule:MIDDLE_EAST:2026-09-28-09",
+    "schedule:MIDDLE_EAST:2026-09-29-09": {
+      "reservationId": "reservation_1790658828798_6fv1p0",
+      "key": "schedule:MIDDLE_EAST:2026-09-29-09",
       "slot": 1,
       "region": "MIDDLE_EAST",
-      "runId": "scheduled-middle_east-1790572315042",
-      "reservedAt": "2026-09-28T05:11:55.044Z",
-      "status": "RESERVED"
-    },
-    "schedule:EUROPE:2026-09-28-09": {
-      "reservationId": "reservation_1790578821416_w7gkaa",
-      "key": "schedule:EUROPE:2026-09-28-09",
-      "slot": 2,
-      "region": "EUROPE",
-      "runId": "scheduled-europe-1790578821414",
-      "reservedAt": "2026-09-28T07:00:21.416Z",
-      "status": "RESERVED"
-    },
-    "schedule:MIDDLE_EAST:2026-09-28-13": {
-      "reservationId": "reservation_1790586896187_gu99fr",
-      "key": "schedule:MIDDLE_EAST:2026-09-28-13",
-      "slot": 3,
-      "region": "MIDDLE_EAST",
-      "runId": "scheduled-middle_east-1790586896186",
-      "reservedAt": "2026-09-28T09:14:56.188Z",
-      "status": "RESERVED"
-    },
-    "schedule:EUROPE:2026-09-28-13": {
-      "reservationId": "reservation_1790593882546_job77v",
-      "key": "schedule:EUROPE:2026-09-28-13",
-      "slot": 4,
-      "region": "EUROPE",
-      "runId": "scheduled-europe-1790593882545",
-      "reservedAt": "2026-09-28T11:11:22.546Z",
-      "status": "RESERVED"
-    },
-    "schedule:MIDDLE_EAST:2026-09-28-18": {
-      "reservationId": "reservation_1790604015779_5qbkue",
-      "key": "schedule:MIDDLE_EAST:2026-09-28-18",
-      "slot": 5,
-      "region": "MIDDLE_EAST",
-      "runId": "scheduled-middle_east-1790604015777",
-      "reservedAt": "2026-09-28T14:00:15.779Z",
-      "status": "RESERVED"
-    },
-    "schedule:USA:2026-09-28-18": {
-      "reservationId": "reservation_1790633465333_b9xd55",
-      "key": "schedule:USA:2026-09-28-18",
-      "slot": 6,
-      "region": "USA",
-      "runId": "scheduled-usa-1790633465330",
-      "reservedAt": "2026-09-28T22:11:05.333Z",
+      "runId": "scheduled-middle_east-1790658828797",
+      "reservedAt": "2026-09-29T05:13:48.798Z",
       "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-09-28T22:11:05.333Z"
+  "updatedAt": "2026-09-29T05:13:48.798Z"
 }
