@@ -1,10 +1,10 @@
 {
   "dailyCount": 0,
   "date": "2026-09-29",
-  "lastRun": "2026-09-29T13:13:49.285Z",
+  "lastRun": "2026-09-29T22:10:37.212Z",
   "lastStatus": "AUTOMATION_COMPLETED",
-  "lastRunId": "scheduled-usa-1790687628658",
+  "lastRunId": "scheduled-usa-1790719836395",
   "lastRegion": "USA",
   "lastRequestedVideos": 1,
-  "updatedAt": "2026-09-29T13:13:49.285Z"
+  "updatedAt": "2026-09-29T22:10:37.212Z"
 }
