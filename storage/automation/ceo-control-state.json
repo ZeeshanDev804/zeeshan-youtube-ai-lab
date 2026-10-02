@@ -7,7 +7,7 @@
   "emergencyStopClearedAt": null,
   "daily": {
     "date": "2026-10-02",
-    "started": 6,
+    "started": 7,
     "completed": 0
   },
   "approvals": {},
@@ -65,7 +65,16 @@
       "runId": "scheduled-uk-1790961232490",
       "reservedAt": "2026-10-02T17:13:52.492Z",
       "status": "RESERVED"
+    },
+    "schedule:USA:2026-10-02-18": {
+      "reservationId": "reservation_1790979012370_waokhg",
+      "key": "schedule:USA:2026-10-02-18",
+      "slot": 7,
+      "region": "USA",
+      "runId": "scheduled-usa-1790979012369",
+      "reservedAt": "2026-10-02T22:10:12.371Z",
+      "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-10-02T17:13:52.492Z"
+  "updatedAt": "2026-10-02T22:10:12.371Z"
 }
