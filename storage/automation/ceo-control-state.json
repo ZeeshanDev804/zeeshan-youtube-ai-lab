@@ -6,21 +6,21 @@
   "emergencyStopAt": null,
   "emergencyStopClearedAt": null,
   "daily": {
-    "date": "2026-10-12",
+    "date": "2026-10-14",
     "started": 1,
     "completed": 0
   },
   "approvals": {},
   "reservations": {
-    "schedule:UK:2026-10-12-09": {
-      "reservationId": "reservation_1791792002396_6fthcx",
-      "key": "schedule:UK:2026-10-12-09",
+    "schedule:USA:2026-10-14-09": {
+      "reservationId": "reservation_1791983141214_m67vbe",
+      "key": "schedule:USA:2026-10-14-09",
       "slot": 1,
-      "region": "UK",
-      "runId": "scheduled-uk-1791792002394",
-      "reservedAt": "2026-10-12T08:00:02.396Z",
+      "region": "USA",
+      "runId": "scheduled-usa-1791983141213",
+      "reservedAt": "2026-10-14T13:05:41.214Z",
       "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-10-12T08:00:02.396Z"
+  "updatedAt": "2026-10-14T13:05:41.214Z"
 }
