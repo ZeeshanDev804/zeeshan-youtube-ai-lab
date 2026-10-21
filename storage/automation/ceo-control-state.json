@@ -6,21 +6,21 @@
   "emergencyStopAt": null,
   "emergencyStopClearedAt": null,
   "daily": {
-    "date": "2026-10-20",
+    "date": "2026-10-21",
     "started": 1,
     "completed": 0
   },
   "approvals": {},
   "reservations": {
-    "schedule:MIDDLE_EAST:2026-10-20-09": {
-      "reservationId": "reservation_1792472849230_2d8qtz",
-      "key": "schedule:MIDDLE_EAST:2026-10-20-09",
+    "schedule:EUROPE:2026-10-21-13": {
+      "reservationId": "reservation_1792581248122_e96pkj",
+      "key": "schedule:EUROPE:2026-10-21-13",
       "slot": 1,
-      "region": "MIDDLE_EAST",
-      "runId": "scheduled-middle_east-1792472849229",
-      "reservedAt": "2026-10-20T05:07:29.230Z",
+      "region": "EUROPE",
+      "runId": "scheduled-europe-1792581248120",
+      "reservedAt": "2026-10-21T11:14:08.122Z",
       "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-10-20T05:07:29.231Z"
+  "updatedAt": "2026-10-21T11:14:08.122Z"
 }
