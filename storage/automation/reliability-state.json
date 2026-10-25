@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-24T09:07:56.123Z",
+  "updatedAt": "2026-10-25T17:09:43.531Z",
   "jobs": {
     "scheduled-europe-1790266284648": {
       "runId": "scheduled-europe-1790266284648",
@@ -1826,6 +1826,54 @@
         "region": "MIDDLE_EAST",
         "scheduleSlotId": "MIDDLE_EAST-2026-10-24-13",
         "reservationKey": "schedule:MIDDLE_EAST:2026-10-24-13",
+        "requestedVideos": 1,
+        "resultStatus": "AUTOMATION_COMPLETED",
+        "produced": 0,
+        "ready": 0,
+        "review": 0,
+        "blocked": 0,
+        "failed": 0
+      }
+    },
+    "scheduled-usa-1792948180899": {
+      "runId": "scheduled-usa-1792948180899",
+      "topic": "Scheduled automation - USA",
+      "status": "COMPLETED",
+      "currentStage": "COMPLETE",
+      "attempts": {},
+      "startedAt": "2026-10-25T17:09:40.904Z",
+      "updatedAt": "2026-10-25T17:09:41.725Z",
+      "completedAt": "2026-10-25T17:09:41.725Z",
+      "failedAt": null,
+      "lastError": null,
+      "metadata": {
+        "region": "USA",
+        "scheduleSlotId": "USA-2026-10-25-13",
+        "reservationKey": "schedule:USA:2026-10-25-13",
+        "requestedVideos": 1,
+        "resultStatus": "AUTOMATION_COMPLETED",
+        "produced": 0,
+        "ready": 0,
+        "review": 0,
+        "blocked": 0,
+        "failed": 0
+      }
+    },
+    "scheduled-europe-1792948181733": {
+      "runId": "scheduled-europe-1792948181733",
+      "topic": "Scheduled automation - EUROPE",
+      "status": "COMPLETED",
+      "currentStage": "COMPLETE",
+      "attempts": {},
+      "startedAt": "2026-10-25T17:09:41.736Z",
+      "updatedAt": "2026-10-25T17:09:43.531Z",
+      "completedAt": "2026-10-25T17:09:43.531Z",
+      "failedAt": null,
+      "lastError": null,
+      "metadata": {
+        "region": "EUROPE",
+        "scheduleSlotId": "EUROPE-2026-10-25-18",
+        "reservationKey": "schedule:EUROPE:2026-10-25-18",
         "requestedVideos": 1,
         "resultStatus": "AUTOMATION_COMPLETED",
         "produced": 0,
