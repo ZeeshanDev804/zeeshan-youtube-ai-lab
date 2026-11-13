@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-12T08:01:48.919Z",
+  "updatedAt": "2026-11-13T18:05:33.541Z",
   "jobs": {
     "scheduled-europe-1790266284648": {
       "runId": "scheduled-europe-1790266284648",
@@ -2042,6 +2042,54 @@
         "region": "EUROPE",
         "scheduleSlotId": "EUROPE-2026-11-12-09",
         "reservationKey": "schedule:EUROPE:2026-11-12-09",
+        "requestedVideos": 1,
+        "resultStatus": "AUTOMATION_COMPLETED",
+        "produced": 0,
+        "ready": 0,
+        "review": 0,
+        "blocked": 0,
+        "failed": 0
+      }
+    },
+    "scheduled-usa-1794593132514": {
+      "runId": "scheduled-usa-1794593132514",
+      "topic": "Scheduled automation - USA",
+      "status": "COMPLETED",
+      "currentStage": "COMPLETE",
+      "attempts": {},
+      "startedAt": "2026-11-13T18:05:32.517Z",
+      "updatedAt": "2026-11-13T18:05:32.963Z",
+      "completedAt": "2026-11-13T18:05:32.963Z",
+      "failedAt": null,
+      "lastError": null,
+      "metadata": {
+        "region": "USA",
+        "scheduleSlotId": "USA-2026-11-13-13",
+        "reservationKey": "schedule:USA:2026-11-13-13",
+        "requestedVideos": 1,
+        "resultStatus": "AUTOMATION_COMPLETED",
+        "produced": 0,
+        "ready": 0,
+        "review": 0,
+        "blocked": 0,
+        "failed": 0
+      }
+    },
+    "scheduled-uk-1794593132967": {
+      "runId": "scheduled-uk-1794593132967",
+      "topic": "Scheduled automation - UK",
+      "status": "COMPLETED",
+      "currentStage": "COMPLETE",
+      "attempts": {},
+      "startedAt": "2026-11-13T18:05:32.969Z",
+      "updatedAt": "2026-11-13T18:05:33.541Z",
+      "completedAt": "2026-11-13T18:05:33.541Z",
+      "failedAt": null,
+      "lastError": null,
+      "metadata": {
+        "region": "UK",
+        "scheduleSlotId": "UK-2026-11-13-18",
+        "reservationKey": "schedule:UK:2026-11-13-18",
         "requestedVideos": 1,
         "resultStatus": "AUTOMATION_COMPLETED",
         "produced": 0,
