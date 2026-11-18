@@ -6,21 +6,21 @@
   "emergencyStopAt": null,
   "emergencyStopClearedAt": null,
   "daily": {
-    "date": "2026-11-16",
+    "date": "2026-11-18",
     "started": 1,
     "completed": 0
   },
   "approvals": {},
   "reservations": {
-    "schedule:EUROPE:2026-11-16-18": {
-      "reservationId": "reservation_1794848415819_ck5mwg",
-      "key": "schedule:EUROPE:2026-11-16-18",
+    "schedule:EUROPE:2026-11-18-18": {
+      "reservationId": "reservation_1795021561450_yk71d4",
+      "key": "schedule:EUROPE:2026-11-18-18",
       "slot": 1,
       "region": "EUROPE",
-      "runId": "scheduled-europe-1794848415817",
-      "reservedAt": "2026-11-16T17:00:15.819Z",
+      "runId": "scheduled-europe-1795021561449",
+      "reservedAt": "2026-11-18T17:06:01.450Z",
       "status": "RESERVED"
     }
   },
-  "updatedAt": "2026-11-16T17:00:15.819Z"
+  "updatedAt": "2026-11-18T17:06:01.450Z"
 }
